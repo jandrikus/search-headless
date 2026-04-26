@@ -1,0 +1,29 @@
+{
+  "name": "search-headless",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "search-web": "./src/cli/search-web.ts",
+    "fetch-content": "./src/cli/fetch-content.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "smoke:fetch": "bun run src/cli/fetch-content.ts https://example.com --no-browser",
+    "smoke:search": "bun run src/cli/search-web.ts \"bun typescript\" --limit 3 --no-human"
+  },
+  "dependencies": {
+    "@mozilla/readability": "latest",
+    "cheerio": "latest",
+    "commander": "latest",
+    "jsdom": "latest",
+    "playwright": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/jsdom": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
