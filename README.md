@@ -12,14 +12,83 @@ fetch-content "https://example.com/article"
 
 Default output is JSON on stdout. Diagnostics and human-readable progress go to stderr. Markdown output is available with `--format markdown`.
 
-## Install
+## Install on a machine
+
+Prerequisites:
+
+- `git`
+- `bun`
+- SSH access to the private GitHub repository
+
+Clone and install:
 
 ```bash
-bun install
-bunx playwright install chromium
+mkdir -p ~/dev
+git clone git@github.com:jandrikus/search-web.git ~/dev/search-web
+cd ~/dev/search-web
+./install.sh
 ```
 
-During development, run commands directly:
+`install.sh` runs:
+
+- `bun install`
+- `bunx playwright install chromium`
+- `bun link`
+
+After installation, verify the commands are globally available:
+
+```bash
+search-web "bun typescript playwright" --limit 5 --timeout 15000
+fetch-content https://example.com --max-chars 500
+```
+
+If the commands are not found, ensure Bun's global bin directory is on PATH:
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+```
+
+Add that line to your shell config, for example `~/.bashrc`, `~/.zshrc`, or equivalent.
+
+## Add the skill to Pi Coding Agent
+
+The repository includes a runtime-only `SKILL.md` that tells Pi agents how to use the installed `search-web` and `fetch-content` commands.
+
+Recommended global Pi setup:
+
+```bash
+mkdir -p ~/.pi/agent/skills
+ln -sfn ~/dev/search-web ~/.pi/agent/skills/search-web
+```
+
+Then start a new Pi session. Pi should discover the skill automatically. To force-load it in an interactive session, use:
+
+```text
+/skill:search-web
+```
+
+Alternative setup through Pi settings:
+
+Edit `~/.pi/agent/settings.json` and append the cloned repository path to `skills`:
+
+```json
+{
+  "skills": ["~/dev/search-web"]
+}
+```
+
+If the file already contains settings, merge the `skills` entry instead of replacing the whole file.
+
+Project-local Pi setup is also possible. From a project where you want the skill available:
+
+```bash
+mkdir -p .pi/skills
+ln -sfn ~/dev/search-web .pi/skills/search-web
+```
+
+## Development commands
+
+During development, you can still run commands directly:
 
 ```bash
 bun run src/cli/search-web.ts "bun typescript" --limit 3 --no-human
