@@ -86,28 +86,9 @@ Use Markdown when the next step is direct reading by an LLM rather than strict J
 |---|---|---|
 | `ok` | Command succeeded | Use results/content |
 | `partial` | Search worked but some fetches failed | Use successful entries, inspect per-result errors |
-| `blocked` | Google/page needs human intervention | Retry later or ask human to run without `--no-human` |
+| `blocked` | Search/page access was blocked | Retry later or inspect `errors[]` |
 | `timeout` | Timeout expired | Retry with larger `--timeout` or narrower query |
 | `error` | Unrecoverable or unexpected failure | Read `errors[]` |
 
 Exit code is `0` for `ok` and `partial`; non-zero for `blocked`, `timeout`, and `error`.
-
-## Human Intervention
-
-By default, `search-web` may open a visible browser if Google shows consent, CAPTCHA, or unusual-traffic pages. A human can solve the prompt, and the command will continue.
-
-For fully non-interactive agent runs, use:
-
-```bash
-search-web "query" --no-human --timeout 15000
-```
-
-If this returns `status: "blocked"`, do not try to bypass it. Ask for human intervention or retry later.
-
-## Safety Rules
-
-- Do not automate CAPTCHA solving.
-- Do not add stealth plugins, fingerprint spoofing, or proxy rotation.
-- Do not fetch localhost or private network URLs; the tool blocks them by default.
-- Keep stdout machine-readable. Do not mix progress logs into stdout.
 
