@@ -3,8 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { withProfileLock } from "../../src/browser/context";
-import { DEFAULT_CONFIG } from "../../src/config";
-import { getBrowserProfileLockFile } from "../../src/fetch/browser-extract";
 import { waitForHumanIntervention } from "../../src/browser/human-intervention";
 import { createDeadline } from "../../src/types";
 
@@ -21,6 +19,3 @@ it("times out waiting for human intervention", async () => {
   expect(result.ok).toBe(false); if (!result.ok) expect(result.error.code).toBe("HUMAN_INTERVENTION_TIMEOUT");
 });
 
-it("browser extraction uses the shared global profile lock by default", () => {
-  expect(getBrowserProfileLockFile()).toBe(DEFAULT_CONFIG.lockFile);
-});

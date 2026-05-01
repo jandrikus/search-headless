@@ -10,7 +10,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "smoke:fetch": "bun run src/cli/fetch-content.ts https://example.com --no-browser",
+    "smoke:fetch": "bun run src/cli/fetch-content.ts https://example.com",
     "smoke:search": "bun run src/cli/search-web.ts \"bun typescript\" --limit 3 --no-human"
   },
   "dependencies": {

@@ -33,6 +33,7 @@ cd ~/dev/search-web
 
 - `bun install`
 - `bunx playwright install chromium`
+- Checks for `obscura` (optional, used by `fetch-content --browser`)
 - `bun link`
 
 After installation, verify the commands are globally available:
@@ -52,38 +53,10 @@ Add that line to your shell config, for example `~/.bashrc`, `~/.zshrc`, or equi
 
 ## Add the skill to Pi Coding Agent
 
-The repository includes a runtime-only `SKILL.md` that tells Pi agents how to use the installed `search-web` and `fetch-content` commands.
-
-Recommended global Pi setup:
-
-```bash
-mkdir -p ~/.pi/agent/skills
-ln -sfn ~/dev/search-web ~/.pi/agent/skills/search-web
-```
-
-Then start a new Pi session. Pi should discover the skill automatically. To force-load it in an interactive session, use:
+`install.sh` copies the skill into `~/.pi/agent/skills/search-fetch/` automatically. Pi discovers it on next start. To force-load:
 
 ```text
-/skill:search-web
-```
-
-Alternative setup through Pi settings:
-
-Edit `~/.pi/agent/settings.json` and append the cloned repository path to `skills`:
-
-```json
-{
-  "skills": ["~/dev/search-web"]
-}
-```
-
-If the file already contains settings, merge the `skills` entry instead of replacing the whole file.
-
-Project-local Pi setup is also possible. From a project where you want the skill available:
-
-```bash
-mkdir -p .pi/skills
-ln -sfn ~/dev/search-web .pi/skills/search-web
+/skill:search-fetch
 ```
 
 ## Development commands
@@ -92,7 +65,7 @@ During development, you can still run commands directly:
 
 ```bash
 bun run src/cli/search-web.ts "bun typescript" --limit 3 --no-human
-bun run src/cli/fetch-content.ts https://example.com --no-browser
+bun run src/cli/fetch-content.ts https://example.com
 ```
 
 ## `search-web`
@@ -125,17 +98,17 @@ Options:
 
 ```text
 --format <json|markdown> Output format. Default: json.
---browser                Force browser extraction.
---no-browser             Disable browser fallback.
---headful                Force visible browser.
---no-human               Reserved for challenge-sensitive flows.
 --timeout <ms>           Overall timeout. Default: 60000.
 --max-chars <n>          Truncate returned text. Default: 50000.
 ```
 
+`fetch-content` uses `obscura fetch --stealth` to extract readable text, title, and metadata from any URL. Requires `obscura` on PATH.
+
 ## Human intervention
 
-If Google shows consent, CAPTCHA, or unusual-traffic pages and human intervention is enabled, the tool uses a visible browser path so a human can solve the challenge manually. With `--no-human`, commands fail fast with structured JSON.
+`search-web` uses Playwright Chromium with a persistent profile for Google search. If Google shows consent, CAPTCHA, or unusual-traffic pages, the tool opens a visible browser for manual challenge solving. With `--no-human`, `search-web` fails fast with structured JSON.
+
+`fetch-content` uses `obscura` (a stateless headless browser) for the browser path and does not support human intervention.
 
 ## Safety boundary
 

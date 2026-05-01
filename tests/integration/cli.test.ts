@@ -9,13 +9,13 @@ async function run(args: string[], env: Record<string,string> = {}) {
 }
 
 it("fetch-content rejects private urls by default with JSON", async () => {
-  const proc = await run(["src/cli/fetch-content.ts", "http://127.0.0.1:1", "--no-browser"]);
+  const proc = await run(["src/cli/fetch-content.ts", "http://127.0.0.1:1"]);
   expect(proc.exitCode).not.toBe(0); const json = JSON.parse(proc.stdout); expect(json.status).toBe("error"); expect(json.errors[0].code).toBe("PRIVATE_URL_BLOCKED");
 });
 
 it("fetch-content extracts local fixture only in test mode", async () => {
   const html = await Bun.file("tests/fixtures/article.html").text(); const base = server(() => new Response(html, { headers: { "content-type": "text/html" } }));
-  const proc = await run(["src/cli/fetch-content.ts", `${base}/a`, "--no-browser"], { SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS: "1" });
+  const proc = await run(["src/cli/fetch-content.ts", `${base}/a`], { SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS: "1" });
   expect(proc.exitCode).toBe(0); const json = JSON.parse(proc.stdout); expect(json.status).toBe("ok"); expect(json.text).toContain("useful paragraph");
 });
 
@@ -40,11 +40,12 @@ it("search-web later-page block with no-human exits non-zero as blocked", async 
 });
 
 it("fetch-content exhausted timeout returns timeout status", async () => {
-  const proc = await run(["src/cli/fetch-content.ts", "https://example.com", "--timeout", "1", "--no-browser"]);
+  const proc = await run(["src/cli/fetch-content.ts", "https://example.com", "--timeout", "1"]);
   expect(proc.exitCode).not.toBe(0); const json = JSON.parse(proc.stdout); expect(json.status).toBe("timeout");
 });
 
-it("fetch-content forced browser timeout returns structured JSON", async () => {
-  const proc = await run(["src/cli/fetch-content.ts", "https://example.com", "--timeout", "1", "--browser"]);
-  expect(proc.exitCode).not.toBe(0); expect(proc.stdout).not.toBe(""); const json = JSON.parse(proc.stdout); expect(["timeout", "error"]).toContain(json.status); expect(json.errors[0].code).toMatch(/FETCH_TIMEOUT|BROWSER_PROFILE_LOCKED/);
+it("fetch-content browser fallback timeout returns structured JSON", async () => {
+  // With a 1ms timeout, HTTP extraction times out (recoverable) and obscura also times out.
+  const proc = await run(["src/cli/fetch-content.ts", "https://example.com", "--timeout", "1"]);
+  expect(proc.exitCode).not.toBe(0); expect(proc.stdout).not.toBe(""); const json = JSON.parse(proc.stdout); expect(["timeout", "error"]).toContain(json.status); expect(json.errors[0].code).toMatch(/FETCH_TIMEOUT/);
 });

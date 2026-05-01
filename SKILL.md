@@ -1,17 +1,15 @@
 ---
-name: search-web
-description: Use when an AI coding agent needs to search Google from the shell or fetch readable content from a URL using the local search-web and fetch-content commands.
+name: search-fetch
+description: Use when an AI coding agent needs to search Google or fetch readable content from a URL. Provides search-web and fetch-content CLI commands.
 ---
 
-# Search Web CLI Skill
+# Search & Fetch
 
-## Overview
-
-Use the local `search-web` and `fetch-content` shell commands to discover web pages and extract readable page content. These tools are designed for AI coding agents: JSON is written to stdout by default, diagnostics go to stderr, and failures are structured.
+Two CLI commands: `search-web` for Google search, `fetch-content` for page extraction (uses obscura headless browser internally). JSON on stdout, diagnostics on stderr.
 
 ## Commands
 
-### Search Google
+### search-web — Search Google
 
 ```bash
 search-web "query" --limit 5 --timeout 15000
@@ -37,34 +35,50 @@ Returns JSON:
 }
 ```
 
-### Search and fetch top results
+Options:
 
-```bash
-search-web "query" --limit 10 --fetch --fetch-limit 5 --timeout 30000
+```text
+--limit <n>              Number of results (default: 10)
+--fetch                  Fetch content for top results
+--fetch-limit <n>        Number of URLs to fetch when --fetch is set (default: 5)
+--format <json|markdown> Output format (default: json)
+--headful                Force visible browser (for CAPTCHA solving)
+--no-human               Fail fast if Google blocks
+--timeout <ms>           Overall timeout (default: 60000)
 ```
 
-Use this when you want result metadata plus readable content from the top URLs.
-
-### Fetch one URL
+### fetch-content — Extract page content
 
 ```bash
-fetch-content "https://example.com/article" --max-chars 50000
+fetch-content "https://example.com/article"
 ```
 
-Returns extracted readable text and metadata.
+Returns JSON:
 
-### Markdown output
-
-```bash
-search-web "query" --format markdown
-fetch-content "https://example.com" --format markdown
+```json
+{
+  "url": "https://example.com/article",
+  "status": "ok",
+  "title": "Article title",
+  "text": "Extracted page text...",
+  "method": "browser",
+  "truncated": false,
+  "textLength": 12345,
+  "errors": []
+}
 ```
 
-Use Markdown when the next step is direct reading by an LLM rather than strict JSON parsing.
+Options:
 
-## Recommended Agent Workflow
+```text
+--format <json|markdown> Output format (default: json)
+--timeout <ms>           Overall timeout (default: 60000)
+--max-chars <n>          Truncate text (default: 50000)
+```
 
-1. Start with search metadata:
+## Workflow
+
+1. Search:
 
    ```bash
    search-web "specific query" --limit 5 --timeout 15000
@@ -72,13 +86,19 @@ Use Markdown when the next step is direct reading by an LLM rather than strict J
 
 2. Pick relevant URLs from `results[].url`.
 
-3. Fetch only the pages you need:
+3. Fetch each page you need:
 
    ```bash
-   fetch-content "https://relevant-url" --max-chars 50000
+   fetch-content "https://relevant-url"
    ```
 
-4. Use `search-web --fetch --fetch-limit 5` only when you need an all-in-one call.
+4. Use `search-web --fetch --fetch-limit 5` for an all-in-one call (search + fetch top results).
+
+5. **Reddit URLs**: `www.reddit.com` blocks headless browsers. Always rewrite to `old.reddit.com` before fetching:
+
+   ```bash
+   fetch-content "https://old.reddit.com/r/.../comments/.../"
+   ```
 
 ## Status Handling
 
@@ -86,9 +106,8 @@ Use Markdown when the next step is direct reading by an LLM rather than strict J
 |---|---|---|
 | `ok` | Command succeeded | Use results/content |
 | `partial` | Search worked but some fetches failed | Use successful entries, inspect per-result errors |
-| `blocked` | Search/page access was blocked | Retry later or inspect `errors[]` |
+| `blocked` | Google/page blocked | Retry later or inspect `errors[]` |
 | `timeout` | Timeout expired | Retry with larger `--timeout` or narrower query |
-| `error` | Unrecoverable or unexpected failure | Read `errors[]` |
+| `error` | Unrecoverable failure | Read `errors[]` |
 
 Exit code is `0` for `ok` and `partial`; non-zero for `blocked`, `timeout`, and `error`.
-
