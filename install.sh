@@ -31,6 +31,7 @@ bunx playwright install chromium
 info "obscura -> $(command -v obscura)"
 
 info "Linking package globally with bun link..."
+bun unlink 2>/dev/null || true
 bun link
 
 if [[ ":${PATH}:" != *":${BUN_BIN_DIR}:"* ]]; then

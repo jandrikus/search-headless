@@ -1,6 +1,6 @@
 ---
 name: search-fetch
-description: Use when an AI coding agent needs to search Google or fetch readable content from a URL. Provides search-web and fetch-content CLI commands.
+description: Use when the agent needs up-to-date knowledge beyond its training cutoff, when the user provides a URL to fetch, or when the agent must search the web to answer a question.
 ---
 
 # Search & Fetch
