@@ -3,6 +3,42 @@ import type { Deadline, SearchResponse, SearchResult, ToolError } from "../types
 import { createDeadline, remainingMs } from "../types";
 import { fetchContent } from "../fetch/fetch-content";
 import { buildBraveSearchUrl, detectBraveBlock, parseBraveNextUrl, parseBraveResults } from "./parse-brave";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+/** Minimum seconds between searches to appear human-like. */
+const MIN_SEARCH_INTERVAL_SEC = 10;
+
+/** Path to the last-search timestamp file (in /tmp for speed). */
+const LAST_SEARCH_FILE = "/tmp/search-headless-last-search";
+
+/**
+ * Rate limiter: wait until enough time has passed since the last search.
+ * Uses a file in /tmp (RAM) to persist timestamp across CLI invocations.
+ */
+async function waitForRateLimit(): Promise<void> {
+  try {
+    if (existsSync(LAST_SEARCH_FILE)) {
+      const lastSearch = parseInt(readFileSync(LAST_SEARCH_FILE, "utf-8").trim(), 10);
+      if (!isNaN(lastSearch)) {
+        const elapsed = (Date.now() - lastSearch) / 1000;
+        const remaining = MIN_SEARCH_INTERVAL_SEC - elapsed;
+        if (remaining > 0) {
+          // Wait the remaining time, rounded up to nearest 100ms
+          await Bun.sleep(Math.ceil(remaining * 1000));
+        }
+      }
+    }
+  } catch {
+    // Ignore errors reading the file
+  }
+  // Update the timestamp
+  try {
+    writeFileSync(LAST_SEARCH_FILE, String(Date.now()));
+  } catch {
+    // Ignore errors writing the file
+  }
+}
 
 export interface SearchBraveOptions {
   limit?: number;
@@ -179,6 +215,9 @@ export async function searchBrave(query: string, options: SearchBraveOptions = {
   const limit = options.limit ?? DEFAULT_CONFIG.searchLimit;
   const deadline = options.deadline ?? createDeadline(options.timeoutMs ?? DEFAULT_CONFIG.timeoutMs);
   const errors: ToolError[] = [];
+
+  // Rate limit: wait if last search was too recent
+  await waitForRateLimit();
 
   try {
     // Try Obscura first (fast, low memory)
