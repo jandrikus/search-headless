@@ -22,6 +22,23 @@ Default output is JSON on stdout. Diagnostics and human-readable progress go to 
 
 Brave Search is the default — fast, lightweight, no session management needed. Region: all, Language: English.
 
+## Rate Limiting
+
+Brave searches are automatically spaced 10 seconds apart to avoid triggering bot detection. The timestamp is stored in `/tmp/search-headless-last-search` (RAM-based for speed). No configuration needed — it just works.
+
+## Output Formats
+
+Both commands support `--format json` (default) and `--format markdown`:
+
+```bash
+# JSON (default) — structured, machine-readable
+search-web "query" --format json
+
+# Markdown — human/LLM-friendly, readable
+search-web "query" --format markdown
+fetch-content "url" --format markdown
+```
+
 ## Install on a machine
 
 Prerequisites:

@@ -106,6 +106,19 @@ Options:
 - **Brave (default)**: Fast, no login required, Obscura-based. Region: all, Language: English.
 - **Google (with `--google`)**: Requires browser profile, supports human-in-the-loop CAPTCHA solving.
 
+## Rate Limiting
+
+Brave searches are automatically spaced 10 seconds apart to avoid triggering bot detection. Timestamp stored in `/tmp/search-headless-last-search` (RAM). No configuration needed.
+
+## Output Formats
+
+Both commands support `--format json` (default) and `--format markdown`:
+
+```bash
+search-web "query" --format markdown
+fetch-content "url" --format markdown
+```
+
 ## Status Handling
 
 | Status | Meaning | Agent action |
