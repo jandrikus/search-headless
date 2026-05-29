@@ -7,6 +7,17 @@ description: Use when the agent needs up-to-date knowledge beyond its training c
 
 Two CLI commands: `search-web` for web search (Brave by default), `fetch-content` for page extraction. Both use Obscura headless browser internally. JSON on stdout, diagnostics on stderr.
 
+## Content Extraction Fallback
+
+`fetch-content` uses a three-tier fallback strategy:
+
+1. **URL Rewrite** — Domain-specific rewrites (e.g., `www.reddit.com` → `old.reddit.com`)
+2. **Obscura** — Fast, lightweight headless browser (default)
+3. **HTTP + Readability** — Plain HTTP request with Mozilla Readability extraction
+4. **Playwright** — Full Chromium browser (last resort, slower)
+
+Each tier falls back to the next when it returns empty text or an error. Reddit URLs are automatically rewritten, so no manual intervention is needed.
+
 ## Commands
 
 ### search-web — Search the web
@@ -95,10 +106,10 @@ Options:
 
 4. Use `search-web --fetch --fetch-limit 5` for an all-in-one call (search + fetch top results).
 
-5. **Reddit URLs**: `www.reddit.com` blocks headless browsers. Always rewrite to `old.reddit.com` before fetching:
+5. **Reddit URLs**: `www.reddit.com` is automatically rewritten to `old.reddit.com` (no manual rewrite needed):
 
    ```bash
-   fetch-content "https://old.reddit.com/r/.../comments/.../"
+   fetch-content "https://www.reddit.com/r/.../comments/.../"
    ```
 
 ## Search Engines
