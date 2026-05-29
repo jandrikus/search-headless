@@ -5,12 +5,22 @@ Bun + TypeScript CLI tools for LLM coding agents that need web search and page c
 ## Commands
 
 ```bash
-search-web "query"
-search-web "query" --fetch --fetch-limit 5
-fetch-content "https://example.com/article"
+search-web "query"                              # Brave Search (default)
+search-web "query" --fetch --fetch-limit 5      # Search + fetch top results
+search-web "query" --google --no-human          # Google Search (legacy)
+fetch-content "https://example.com/article"     # Extract page content
 ```
 
 Default output is JSON on stdout. Diagnostics and human-readable progress go to stderr. Markdown output is available with `--format markdown`.
+
+## Search Engines
+
+| Engine | Default | Backend | CAPTCHA | Login |
+|--------|---------|---------|---------|-------|
+| **Brave** | ✅ Yes | Obscura | Auto-solved | Not required |
+| **Google** | `--google` flag | Playwright | Human-in-the-loop | Browser profile |
+
+Brave Search is the default — fast, lightweight, no session management needed. Region: all, Language: English.
 
 ## Install on a machine
 
@@ -18,7 +28,7 @@ Prerequisites:
 
 - `git`
 - `bun`
-- SSH access to the private GitHub repository
+- `obscura` (required for Brave search and content extraction)
 
 Clone and install:
 
@@ -32,14 +42,14 @@ cd ~/dev/search-web
 `install.sh` runs:
 
 - `bun install`
-- `bunx playwright install chromium`
-- Checks for `obscura` (optional, used by `fetch-content --browser`)
+- `bunx playwright install chromium` (for Google fallback)
+- Checks for `obscura` (required)
 - `bun link`
 
 After installation, verify the commands are globally available:
 
 ```bash
-search-web "bun typescript playwright" --limit 5 --timeout 15000
+search-web "bun typescript" --limit 5 --timeout 15000
 fetch-content https://example.com --max-chars 500
 ```
 
@@ -48,8 +58,6 @@ If the commands are not found, ensure Bun's global bin directory is on PATH:
 ```bash
 export PATH="$HOME/.bun/bin:$PATH"
 ```
-
-Add that line to your shell config, for example `~/.bashrc`, `~/.zshrc`, or equivalent.
 
 ## Add the skill to Pi Coding Agent
 
@@ -64,7 +72,8 @@ Add that line to your shell config, for example `~/.bashrc`, `~/.zshrc`, or equi
 During development, you can still run commands directly:
 
 ```bash
-bun run src/cli/search-web.ts "bun typescript" --limit 3 --no-human
+bun run src/cli/search-web.ts "bun typescript" --limit 3
+bun run src/cli/search-web.ts "bun typescript" --limit 3 --google --no-human
 bun run src/cli/fetch-content.ts https://example.com
 ```
 
@@ -81,12 +90,11 @@ Options:
 --fetch                  Fetch content for top results.
 --fetch-limit <n>        Number of result URLs to fetch. Default: 5.
 --format <json|markdown> Output format. Default: json.
---headful                Force visible browser.
---no-human               Fail fast if human intervention is needed.
+--google                 Use Google instead of Brave.
+--headful                Force visible browser (Google only).
+--no-human               Fail fast on CAPTCHA (Google only).
 --timeout <ms>           Overall timeout. Default: 60000.
 ```
-
-`--region` is intentionally deferred for v0.1.
 
 ## `fetch-content`
 
@@ -106,9 +114,9 @@ Options:
 
 ## Human intervention
 
-`search-web` uses Playwright Chromium with a persistent profile for Google search. If Google shows consent, CAPTCHA, or unusual-traffic pages, the tool opens a visible browser for manual challenge solving. With `--no-human`, `search-web` fails fast with structured JSON.
+**Brave (default)**: CAPTCHA is solved automatically by clicking the "Verify" button — no human needed.
 
-`fetch-content` uses `obscura` (a stateless headless browser) for the browser path and does not support human intervention.
+**Google (with `--google`)**: Uses Playwright Chromium with a persistent profile. If Google shows consent, CAPTCHA, or unusual-traffic pages, the tool opens a visible browser for manual challenge solving. With `--no-human`, fails fast with structured JSON.
 
 ## Safety boundary
 

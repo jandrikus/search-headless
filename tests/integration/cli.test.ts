@@ -20,22 +20,22 @@ it("fetch-content extracts local fixture only in test mode", async () => {
 });
 
 it("search-web fixture mode returns parsed JSON", async () => {
-  const proc = await run(["src/cli/search-web.ts", "example", "--limit", "2", "--no-human"], { SEARCH_HEADLESS_GOOGLE_FIXTURE: "tests/fixtures/google-results.html" });
+  const proc = await run(["src/cli/search-web.ts", "example", "--limit", "2", "--no-human", "--google"], { SEARCH_HEADLESS_GOOGLE_FIXTURE: "tests/fixtures/google-results.html" });
   expect(proc.exitCode).toBe(0); const json = JSON.parse(proc.stdout); expect(json.results).toHaveLength(2); expect(json.results[0].title).toBe("Alpha");
 });
 
 it("search-web fixture mode paginates when more results are requested", async () => {
-  const proc = await run(["src/cli/search-web.ts", "example", "--limit", "4", "--no-human"], { SEARCH_HEADLESS_GOOGLE_FIXTURE: "tests/fixtures/google-results.html", SEARCH_HEADLESS_GOOGLE_FIXTURE_2: "tests/fixtures/google-results-page2.html" });
+  const proc = await run(["src/cli/search-web.ts", "example", "--limit", "4", "--no-human", "--google"], { SEARCH_HEADLESS_GOOGLE_FIXTURE: "tests/fixtures/google-results.html", SEARCH_HEADLESS_GOOGLE_FIXTURE_2: "tests/fixtures/google-results-page2.html" });
   expect(proc.exitCode).toBe(0); const json = JSON.parse(proc.stdout); expect(json.results.map((r: any) => r.title)).toEqual(["Alpha", "Beta", "Gamma", "Delta"]); expect(json.results[3].rank).toBe(4);
 });
 
 it("search-web blocked fixture exits non-zero with structured JSON", async () => {
-  const proc = await run(["src/cli/search-web.ts", "example", "--no-human"], { SEARCH_HEADLESS_GOOGLE_FIXTURE: "tests/fixtures/google-blocked.html" });
+  const proc = await run(["src/cli/search-web.ts", "example", "--no-human", "--google"], { SEARCH_HEADLESS_GOOGLE_FIXTURE: "tests/fixtures/google-blocked.html" });
   expect(proc.exitCode).not.toBe(0); const json = JSON.parse(proc.stdout); expect(json.status).toBe("blocked"); expect(json.errors[0].code).toBe("HUMAN_INTERVENTION_REQUIRED");
 });
 
 it("search-web later-page block with no-human exits non-zero as blocked", async () => {
-  const proc = await run(["src/cli/search-web.ts", "example", "--limit", "4", "--no-human"], { SEARCH_HEADLESS_GOOGLE_FIXTURE: "tests/fixtures/google-results.html", SEARCH_HEADLESS_GOOGLE_FIXTURE_2: "tests/fixtures/google-blocked.html" });
+  const proc = await run(["src/cli/search-web.ts", "example", "--limit", "4", "--no-human", "--google"], { SEARCH_HEADLESS_GOOGLE_FIXTURE: "tests/fixtures/google-results.html", SEARCH_HEADLESS_GOOGLE_FIXTURE_2: "tests/fixtures/google-blocked.html" });
   expect(proc.exitCode).not.toBe(0); const json = JSON.parse(proc.stdout); expect(json.status).toBe("blocked"); expect(json.results).toHaveLength(2); expect(json.errors[0].code).toBe("HUMAN_INTERVENTION_REQUIRED");
 });
 

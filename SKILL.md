@@ -5,11 +5,11 @@ description: Use when the agent needs up-to-date knowledge beyond its training c
 
 # Search & Fetch
 
-Two CLI commands: `search-web` for Google search, `fetch-content` for page extraction (uses obscura headless browser internally). JSON on stdout, diagnostics on stderr.
+Two CLI commands: `search-web` for web search (Brave by default), `fetch-content` for page extraction. Both use Obscura headless browser internally. JSON on stdout, diagnostics on stderr.
 
 ## Commands
 
-### search-web — Search Google
+### search-web — Search the web
 
 ```bash
 search-web "query" --limit 5 --timeout 15000
@@ -20,7 +20,7 @@ Returns JSON:
 ```json
 {
   "query": "query",
-  "engine": "google",
+  "engine": "brave",
   "status": "ok",
   "results": [
     {
@@ -42,8 +42,9 @@ Options:
 --fetch                  Fetch content for top results
 --fetch-limit <n>        Number of URLs to fetch when --fetch is set (default: 5)
 --format <json|markdown> Output format (default: json)
---headful                Force visible browser (for CAPTCHA solving)
---no-human               Fail fast if Google blocks
+--google                 Use Google instead of Brave (requires browser profile)
+--headful                Force visible browser (Google only, for CAPTCHA solving)
+--no-human               Fail fast if blocked (Google only)
 --timeout <ms>           Overall timeout (default: 60000)
 ```
 
@@ -100,13 +101,18 @@ Options:
    fetch-content "https://old.reddit.com/r/.../comments/.../"
    ```
 
+## Search Engines
+
+- **Brave (default)**: Fast, no login required, Obscura-based. Region: all, Language: English.
+- **Google (with `--google`)**: Requires browser profile, supports human-in-the-loop CAPTCHA solving.
+
 ## Status Handling
 
 | Status | Meaning | Agent action |
 |---|---|---|
 | `ok` | Command succeeded | Use results/content |
 | `partial` | Search worked but some fetches failed | Use successful entries, inspect per-result errors |
-| `blocked` | Google/page blocked | Retry later or inspect `errors[]` |
+| `blocked` | Search engine blocked | Retry later or inspect `errors[]` |
 | `timeout` | Timeout expired | Retry with larger `--timeout` or narrower query |
 | `error` | Unrecoverable failure | Read `errors[]` |
 
