@@ -44,24 +44,24 @@ fetch-content "url" --format markdown
 Prerequisites:
 
 - `git`
-- `bun`
-- `obscura` (required for Brave search and content extraction)
+- `bun` (recommended) or `npm`
 
 Clone and install:
 
 ```bash
 mkdir -p ~/dev
-git clone git@github.com:jandrikus/search-web.git ~/dev/search-web
-cd ~/dev/search-web
+git clone git@github.com:jandrikus/search-headless.git ~/dev/search-headless
+cd ~/dev/search-headless
 ./install.sh
 ```
 
 `install.sh` runs:
 
-- `bun install`
-- `bunx playwright install chromium` (for Google fallback)
-- Checks for `obscura` (required)
-- `bun link`
+- Detects `bun` or `npm` (prefers bun, falls back to npm)
+- Installs `obscura` automatically if not found
+- Installs dependencies
+- Installs Playwright Chromium (for Google fallback)
+- Links commands globally (`bun link` / `npm link`)
 
 After installation, verify the commands are globally available:
 
@@ -70,19 +70,18 @@ search-web "bun typescript" --limit 5 --timeout 15000
 fetch-content https://example.com --max-chars 500
 ```
 
-If the commands are not found, ensure Bun's global bin directory is on PATH:
+If the commands are not found, ensure your global bin directory is on PATH:
 
 ```bash
+# For bun
 export PATH="$HOME/.bun/bin:$PATH"
+# For npm
+export PATH="$(npm bin -g):$PATH"
 ```
 
-## Add the skill to Pi Coding Agent
+## Pi Extension
 
-`install.sh` copies the skill into `~/.pi/agent/skills/search-fetch/` automatically. Pi discovers it on next start. To force-load:
-
-```text
-/skill:search-fetch
-```
+This project provides a Pi extension for integration with Pi Coding Agent. See the extension configuration for details.
 
 ## Development commands
 
