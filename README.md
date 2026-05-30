@@ -81,7 +81,15 @@ export PATH="$(npm bin -g):$PATH"
 
 ## Pi Extension
 
-This project provides a Pi extension for integration with Pi Coding Agent. See the extension configuration for details.
+`search-headless` powers the [`pi-search-tool`](https://github.com/jandrikus/pi-extensions/tree/main/pi-search-tool) extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent). The extension adds `search` and `fetch` tools to Pi, using the CLI commands installed above.
+
+To use it, install this first (steps above), then add the extension to your Pi config:
+
+```json
+{
+  "extensions": ["pi-search-tool"]
+}
+```
 
 ## Development commands
 
