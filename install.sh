@@ -41,19 +41,19 @@ if ! command -v obscura >/dev/null 2>&1; then
   ARCH="$(uname -m)"
 
   case "$OS" in
-    Linux)  OBS_OS="unknown-linux-gnu" ;;
-    Darwin) OBS_OS="apple-darwin" ;;
-    *)      fail "Unsupported OS for obscura auto-install: $OS. Install manually from https://github.com/jandrikus/obscura" ;;
+    Linux)  OBS_OS="linux" ;;
+    Darwin) OBS_OS="macos" ;;
+    *)      fail "Unsupported OS for obscura auto-install: $OS. Install manually from https://github.com/h4ckf0r0day/obscura" ;;
   esac
 
   case "$ARCH" in
     x86_64|amd64)  OBS_ARCH="x86_64" ;;
     aarch64|arm64) OBS_ARCH="aarch64" ;;
-    *)             fail "Unsupported architecture for obscura auto-install: $ARCH. Install manually from https://github.com/jandrikus/obscura" ;;
+    *)             fail "Unsupported architecture for obscura auto-install: $ARCH. Install manually from https://github.com/h4ckf0r0day/obscura" ;;
   esac
 
   OBS_TARBALL="obscura-${OBS_ARCH}-${OBS_OS}.tar.gz"
-  OBS_URL="https://github.com/jandrikus/obscura/releases/latest/download/${OBS_TARBALL}"
+  OBS_URL="https://github.com/h4ckf0r0day/obscura/releases/latest/download/${OBS_TARBALL}"
 
   info "Downloading obscura from ${OBS_URL}..."
   if command -v curl >/dev/null 2>&1; then
@@ -61,7 +61,7 @@ if ! command -v obscura >/dev/null 2>&1; then
   elif command -v wget >/dev/null 2>&1; then
     wget -qO- "$OBS_URL" | tar -xz -C "$OBS_BIN_DIR"
   else
-    fail "Neither curl nor wget found. Install obscura manually from https://github.com/jandrikus/obscura"
+    fail "Neither curl nor wget found. Install obscura manually from https://github.com/h4ckf0r0day/obscura"
   fi
 
   # Ensure the binary is on PATH for this session
@@ -76,7 +76,7 @@ if ! command -v obscura >/dev/null 2>&1; then
   if command -v obscura >/dev/null 2>&1; then
     info "obscura installed -> $(command -v obscura)"
   else
-    fail "obscura installation failed. Install manually from https://github.com/jandrikus/obscura"
+    fail "obscura installation failed. Install manually from https://github.com/h4ckf0r0day/obscura"
   fi
 else
   info "obscura found -> $(command -v obscura)"
