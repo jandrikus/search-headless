@@ -1,6 +1,1 @@
-node_modules/
-coverage/
-dist/
-.search-headless/
-*.log
-.DS_Store
+/target

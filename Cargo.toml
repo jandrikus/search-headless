@@ -1,0 +1,43 @@
+[package]
+name = "search-headless"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Web search and page content extraction for LLM coding agents"
+
+[lib]
+name = "search_headless"
+path = "src/lib.rs"
+
+[[bin]]
+name = "search-headless"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dom_query = "0.28"
+dom_smoothie = { version = "0.18", features = ["serde"] }
+futures = "0.3"
+rand = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots", "http2", "stream", "gzip", "brotli", "deflate", "zstd"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "time", "net", "io-util"] }
+url = "2"
+axum = { version = "0.8", optional = true }
+
+[features]
+testing = ["dep:axum"]
+
+[dev-dependencies]
+# Self dev-dependency so `cargo test` unifies the `testing` feature on, making the
+# throwaway HTTP server available to both unit and integration tests.
+search-headless = { path = ".", features = ["testing"] }
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

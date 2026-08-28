@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN_DIR="${HOME}/.local/bin"
 
 info() {
   printf '\033[1;34m[search-headless]\033[0m %s\n' "$*"
@@ -16,27 +17,12 @@ fail() {
   exit 1
 }
 
-# ── Detect package manager ──────────────────────────────────────────────────
-PACKAGE_MANAGER=""
-if command -v bun >/dev/null 2>&1; then
-  PACKAGE_MANAGER="bun"
-  info "Found bun ($(command -v bun))"
-elif command -v npm >/dev/null 2>&1; then
-  PACKAGE_MANAGER="npm"
-  info "Found npm ($(command -v npm))"
-else
-  fail "Neither bun nor npm was found on PATH.\n  Install bun (recommended): https://bun.sh\n  Or install npm (comes with Node.js): https://nodejs.org"
-fi
-
 # ── Install obscura if missing ──────────────────────────────────────────────
 if ! command -v obscura >/dev/null 2>&1; then
   info "obscura not found. Installing..."
 
-  # Determine install directory
-  OBS_BIN_DIR="${HOME}/.local/bin"
-  mkdir -p "$OBS_BIN_DIR"
+  mkdir -p "$BIN_DIR"
 
-  # Detect OS + arch
   OS="$(uname -s)"
   ARCH="$(uname -m)"
 
@@ -57,22 +43,18 @@ if ! command -v obscura >/dev/null 2>&1; then
 
   info "Downloading obscura from ${OBS_URL}..."
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$OBS_URL" | tar -xz -C "$OBS_BIN_DIR"
+    curl -fsSL "$OBS_URL" | tar -xz -C "$BIN_DIR"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- "$OBS_URL" | tar -xz -C "$OBS_BIN_DIR"
+    wget -qO- "$OBS_URL" | tar -xz -C "$BIN_DIR"
   else
     fail "Neither curl nor wget found. Install obscura manually from https://github.com/h4ckf0r0day/obscura"
   fi
 
-  # Ensure the binary is on PATH for this session
-  if [[ ":${PATH}:" != *":${OBS_BIN_DIR}:"* ]]; then
-    export PATH="${OBS_BIN_DIR}:${PATH}"
-    warn "Added ${OBS_BIN_DIR} to PATH for this session."
-    warn "Add this to your shell config for persistence:"
-    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  # Ensure the binary is on PATH for this session.
+  if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
+    export PATH="${BIN_DIR}:${PATH}"
   fi
 
-  # Verify installation
   if command -v obscura >/dev/null 2>&1; then
     info "obscura installed -> $(command -v obscura)"
   else
@@ -82,42 +64,33 @@ else
   info "obscura found -> $(command -v obscura)"
 fi
 
-# ── Install dependencies ───────────────────────────────────────────────────
+# ── Build ───────────────────────────────────────────────────────────────────
+command -v cargo >/dev/null 2>&1 || fail "cargo was not found on PATH.\n  Install Rust: https://rustup.rs"
+
+info "Building with cargo ($(cargo --version))..."
 cd "$PROJECT_DIR"
+cargo build --release
 
-info "Installing dependencies with ${PACKAGE_MANAGER}..."
-if [[ "$PACKAGE_MANAGER" == "bun" ]]; then
-  bun install
-else
-  npm install
+# ── Install the binary and its aliases ──────────────────────────────────────
+mkdir -p "$BIN_DIR"
+install -m 755 "${PROJECT_DIR}/target/release/search-headless" "${BIN_DIR}/search-headless"
+
+# The binary dispatches on the name it is invoked under, so these symlinks are
+# the whole of `search-web` and `fetch-content`.
+for alias in search-web fetch-content; do
+  ln -sf "${BIN_DIR}/search-headless" "${BIN_DIR}/${alias}"
+  info "${alias} -> ${BIN_DIR}/search-headless"
+done
+
+if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
+  warn "${BIN_DIR} is not on PATH."
+  warn "Add this to your shell config:"
+  warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 
-# ── Link commands globally ─────────────────────────────────────────────────
-info "Linking commands globally with ${PACKAGE_MANAGER}..."
-if [[ "$PACKAGE_MANAGER" == "bun" ]]; then
-  BUN_BIN_DIR="${HOME}/.bun/bin"
-  bun unlink 2>/dev/null || true
-  bun link
-
-  if [[ ":${PATH}:" != *":${BUN_BIN_DIR}:"* ]]; then
-    warn "${BUN_BIN_DIR} is not currently on PATH."
-    warn "Add this to your shell config:"
-    warn "  export PATH=\"\$HOME/.bun/bin:\$PATH\""
-  else
-    info "Bun global bin directory is already on PATH."
-  fi
-else
-  npm link
-  NPM_BIN_DIR="$(npm bin -g 2>/dev/null || true)"
-  if [[ -n "$NPM_BIN_DIR" ]] && [[ ":${PATH}:" != *":${NPM_BIN_DIR}:"* ]]; then
-    warn "${NPM_BIN_DIR} is not currently on PATH."
-    warn "Add it to your shell config for persistent access."
-  fi
-fi
-
-# ── Verify linked commands ─────────────────────────────────────────────────
-info "Verifying linked commands..."
-for cmd in search-web fetch-content; do
+# ── Verify ──────────────────────────────────────────────────────────────────
+info "Verifying installed commands..."
+for cmd in search-headless search-web fetch-content; do
   if command -v "$cmd" >/dev/null 2>&1; then
     info "$cmd -> $(command -v "$cmd")"
   else
@@ -129,3 +102,5 @@ done
 info "Done! Try:"
 printf '  search-web "bun typescript" --limit 5 --timeout 15000\n'
 printf '  fetch-content https://example.com\n'
+printf '\nThe binary at %s is self-contained apart from libc.\n' "${BIN_DIR}/search-headless"
+printf 'See the README for a fully static musl build.\n'

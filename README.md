@@ -1,6 +1,8 @@
 # search-headless
 
-Bun + TypeScript CLI tools for LLM coding agents that need web search and page content extraction via bash-callable commands.
+A single Rust binary for LLM coding agents that need web search and page content extraction via bash-callable commands.
+
+One executable, no runtime to install. It answers to three names: `search-headless` with `search` and `fetch` subcommands, and the `search-web` / `fetch-content` symlinks that `install.sh` drops beside it.
 
 ## Commands
 
@@ -9,6 +11,9 @@ search-web "query"                              # Brave Search
 search-web "query" --fetch --fetch-limit 5      # Search + fetch top results
 fetch-content "https://example.com/article"     # Extract page content
 fetch-content url-a url-b url-c                 # Fetch several pages in parallel
+
+search-headless search "query" --limit 5        # the same thing, spelled out
+search-headless fetch https://example.com
 ```
 
 Default output is JSON on stdout. Diagnostics and human-readable progress go to stderr. Markdown output is available with `--format markdown`.
@@ -72,7 +77,7 @@ fetch-content "url" --format markdown
 Prerequisites:
 
 - `git`
-- `bun` (recommended) or `npm`
+- `cargo` (see [rustup.rs](https://rustup.rs))
 
 Clone and install:
 
@@ -85,10 +90,9 @@ cd ~/dev/search-headless
 
 `install.sh` runs:
 
-- Detects `bun` or `npm` (prefers bun, falls back to npm)
 - Installs `obscura` automatically if not found
-- Installs dependencies
-- Links commands globally (`bun link` / `npm link`)
+- `cargo build --release`
+- Copies the binary to `~/.local/bin` and symlinks `search-web` and `fetch-content` beside it
 
 After installation, verify the commands are globally available:
 
@@ -97,14 +101,30 @@ search-web "bun typescript" --limit 5 --timeout 15000
 fetch-content https://example.com --max-chars 500
 ```
 
-If the commands are not found, ensure your global bin directory is on PATH:
+If the commands are not found, put the install directory on PATH:
 
 ```bash
-# For bun
-export PATH="$HOME/.bun/bin:$PATH"
-# For npm
-export PATH="$(npm bin -g):$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 ```
+
+### Shipping it elsewhere
+
+The release binary is about 8 MB and links against nothing but `libc`, `libm` and `libgcc_s` - the
+TLS stack and the CA roots are compiled in, so there is no OpenSSL to match and no certificate store
+to find. Copying it to another machine of the same architecture with a glibc at least as new is
+enough.
+
+For a fully static binary that ignores glibc versions entirely, build against musl. The TLS backend
+compiles C, so this needs a musl C toolchain as well as the Rust target:
+
+```bash
+# Arch: pacman -S musl   Debian/Ubuntu: apt install musl-tools
+rustup target add x86_64-unknown-linux-musl
+CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unknown-linux-musl
+```
+
+`obscura` stays a separate executable either way: it embeds V8 and publishes no library crate, so it
+cannot be linked in. Ship the two files together.
 
 ## Pi Extension
 
@@ -120,11 +140,11 @@ To use it, install this first (steps above), then add the extension to your Pi c
 
 ## Development commands
 
-During development, you can still run commands directly:
+During development, run it straight out of the build directory:
 
 ```bash
-bun run src/cli/search-web.ts "bun typescript" --limit 3
-bun run src/cli/fetch-content.ts https://example.com https://bun.sh
+cargo run -- search "bun typescript" --limit 3
+cargo run -- fetch https://example.com https://bun.sh
 ```
 
 ## `search-web`
@@ -173,7 +193,7 @@ Extraction runs in two tiers, cheapest first.
 
 1. **HTTP + Readability.** No browser. Yields separated paragraphs plus title, byline, excerpt,
    site name and published time. Requests are sent with ordinary browser headers, because a default
-   Bun agent string is answered with a 403 by a large share of sites.
+   HTTP client agent string is answered with a 403 by a large share of sites.
 2. **Obscura.** A real render, for pages whose content is written by script. Requires `obscura` on PATH.
 
 A thin HTTP result on a script-bearing page is treated as a possibly unrendered shell and re-checked
@@ -187,12 +207,12 @@ the responses a real browser is plausibly served differently.
 
 ## How obscura is driven
 
-Every obscura invocation goes through one wrapper, `src/obscura/runner.ts`, so argument
+Every obscura invocation goes through one wrapper, `src/obscura.rs`, so argument
 construction and deadline clamping stay in a single place. Each fetch is its own `obscura fetch`
 process, which parallelizes better than a shared daemon would: obscura serializes page work
 within a process, so N processes genuinely beat one.
 
-A search result page is handed back to TypeScript and parsed there, in `src/search/parse-brave.ts`,
+A search result page is handed back to Rust and parsed there, in `src/search/parse_brave.rs`,
 rather than picked apart by a script running inside the page. That keeps the parser under the fixture
 tests: the code that runs in production is the code the tests exercise. Only inert weight — script,
 style, svg, iframe and friends — is dropped before the HTML crosses the pipe, which takes a live
@@ -244,9 +264,14 @@ This project does not implement CAPTCHA solving, browser fingerprint spoofing, p
 ## Development
 
 ```bash
-bun run typecheck
-bun test
+cargo build
+cargo test
+cargo clippy --all-targets -- -D warnings
 ```
+
+Two tests drive the real `obscura` binary - one for each script that runs inside the page - and skip
+themselves when it is not installed. Everything else uses a stand-in binary or a local HTTP server,
+so the suite needs no network.
 
 ## License
 
