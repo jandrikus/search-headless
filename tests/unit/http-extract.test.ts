@@ -24,3 +24,43 @@ it("blocks redirects to private urls by default", async () => {
   const result = await extractViaHttp(`${base}/redirect`, { deadline: createDeadline(5000), maxChars: 1000, allowPrivateUrls: true, allowPrivateRedirects: false });
   expect(result.status).toBe("error"); expect(result.errors[0].code).toBe("PRIVATE_URL_BLOCKED");
 });
+
+it("identifies as a browser so ordinary sites answer", async () => {
+  // Bun's default agent string is answered with a 403 by a large share of sites,
+  // which pushed every one of them onto the expensive browser tier.
+  let seen = "";
+  const base = server((req) => { seen = req.headers.get("user-agent") ?? ""; return new Response("<html><body><p>ok</p></body></html>", { headers: { "content-type": "text/html" } }); });
+  await extractViaHttp(`${base}/a`, { deadline: createDeadline(5000), maxChars: 1000, allowPrivateUrls: true });
+  expect(seen).toContain("Mozilla/5.0");
+  expect(seen).not.toContain("Bun/");
+});
+
+it("reports an HTTP error status instead of parsing the error page", async () => {
+  const base = server(() => new Response("<html><body>Not found</body></html>", { status: 404, headers: { "content-type": "text/html" } }));
+  const result = await extractViaHttp(`${base}/missing`, { deadline: createDeadline(5000), maxChars: 1000, allowPrivateUrls: true });
+  expect(result.status).toBe("error");
+  expect(result.errors[0].code).toBe("FETCH_HTTP_ERROR");
+  expect(result.errors[0].details).toEqual({ status: 404 });
+});
+
+it("returns plain text bodies as-is", async () => {
+  const base = server(() => new Response("# Notes\n\nJust text.", { headers: { "content-type": "text/plain; charset=utf-8" } }));
+  const result = await extractViaHttp(`${base}/notes.txt`, { deadline: createDeadline(5000), maxChars: 1000, allowPrivateUrls: true });
+  expect(result.status).toBe("ok");
+  expect(result.text).toContain("Just text.");
+});
+
+it("refuses a body larger than the cap instead of buffering it", async () => {
+  const base = server(() => new Response("<html><body>" + "x".repeat(200_000) + "</body></html>", { headers: { "content-type": "text/html" } }));
+  const result = await extractViaHttp(`${base}/big`, { deadline: createDeadline(5000), maxChars: 1000, allowPrivateUrls: true, maxResponseBytes: 1024 });
+  expect(result.status).toBe("error");
+  expect(result.errors[0].code).toBe("RESPONSE_TOO_LARGE");
+});
+
+it("rejects a non-HTML content type without downloading it", async () => {
+  const base = server(() => new Response("%PDF-1.7", { headers: { "content-type": "application/pdf" } }));
+  const result = await extractViaHttp(`${base}/doc.pdf`, { deadline: createDeadline(5000), maxChars: 1000, allowPrivateUrls: true });
+  expect(result.status).toBe("error");
+  expect(result.errors[0].code).toBe("FETCH_NOT_HTML");
+  expect(result.errors[0].message).toContain("application/pdf");
+});

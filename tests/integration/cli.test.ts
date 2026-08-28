@@ -54,3 +54,46 @@ it("fetch-content browser fallback timeout returns structured JSON", async () =>
   const proc = await run(["src/cli/fetch-content.ts", "https://example.com", "--timeout", "1"]);
   expect(proc.exitCode).not.toBe(0); expect(proc.stdout).not.toBe(""); const json = JSON.parse(proc.stdout); expect(["timeout", "error"]).toContain(json.status); expect(json.errors[0].code).toMatch(/FETCH_TIMEOUT/);
 });
+
+it("fetch-content fetches several urls in one run and keeps them in order", async () => {
+  const html = (name: string) => `<!doctype html><html><head><title>${name}</title></head><body><article><p>${"Body of " + name + ". "}${"filler ".repeat(80)}</p></article></body></html>`;
+  const base = server((req) => new Response(html(new URL(req.url).pathname.slice(1)), { headers: { "content-type": "text/html" } }));
+  const proc = await run(["src/cli/fetch-content.ts", `${base}/alpha`, `${base}/beta`], { SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS: "1" });
+
+  expect(proc.exitCode).toBe(0);
+  const json = JSON.parse(proc.stdout);
+  expect(json.status).toBe("ok");
+  expect(json.results.map((r: { title: string }) => r.title)).toEqual(["alpha", "beta"]);
+});
+
+it("fetch-content reports a batch where only some urls worked as partial, exiting zero", async () => {
+  const base = server((req) => new URL(req.url).pathname === "/good"
+    ? new Response(`<!doctype html><html><head><title>Good</title></head><body><article><p>${"real content ".repeat(60)}</p></article></body></html>`, { headers: { "content-type": "text/html" } })
+    : new Response("nope", { status: 404, headers: { "content-type": "text/html" } }));
+  const proc = await run(["src/cli/fetch-content.ts", `${base}/good`, `${base}/bad`], { SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS: "1" });
+
+  expect(proc.exitCode).toBe(0);
+  const json = JSON.parse(proc.stdout);
+  expect(json.status).toBe("partial");
+  expect(json.results[0].status).toBe("ok");
+  expect(json.results[1].status).toBe("error");
+});
+
+it("fetch-content --no-cache re-requests the page", async () => {
+  let hits = 0;
+  const base = server(() => { hits++; return new Response(`<!doctype html><html><head><title>Counted</title></head><body><article><p>${"content ".repeat(80)}</p></article></body></html>`, { headers: { "content-type": "text/html" } }); });
+  const env = { SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS: "1" };
+
+  await run(["src/cli/fetch-content.ts", `${base}/page`], env);
+  await run(["src/cli/fetch-content.ts", `${base}/page`], env);
+  expect(hits).toBe(1);
+
+  await run(["src/cli/fetch-content.ts", `${base}/page`, "--no-cache"], env);
+  expect(hits).toBe(2);
+});
+
+it("rejects a nonsense flag value before doing any work", async () => {
+  const proc = await run(["src/cli/search-web.ts", "example", "--limit", "0"]);
+  expect(proc.exitCode).toBe(2);
+  expect(proc.stderr).toContain("limit must be a positive integer");
+});

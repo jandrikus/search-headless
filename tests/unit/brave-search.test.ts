@@ -1,5 +1,6 @@
 import { expect, it } from "bun:test";
 import { detectBraveBlock, parseBraveNextUrl, parseBraveResults } from "../../src/search/parse-brave";
+import { canonicalUrl } from "../../src/search/brave";
 
 it("parses organic Brave results", async () => {
   const html = await Bun.file("tests/fixtures/brave-results.html").text();
@@ -86,4 +87,19 @@ it("detects Brave interstitials that are not the CAPTCHA wording", async () => {
 it("does not report a block when results parsed, even if a snippet mentions a phrase", async () => {
   const html = await Bun.file("tests/fixtures/brave-results.html").text();
   expect(detectBraveBlock({ html, text: "verifying you can use this library" })).toBe(false);
+});
+
+it("canonicalises urls so the same result is not ranked twice", () => {
+  const a = canonicalUrl("https://www.Example.com/post/?utm_source=brave&id=7#top");
+  const b = canonicalUrl("https://example.com/post?id=7");
+  expect(a).toBe(b);
+});
+
+it("keeps genuinely different urls apart", () => {
+  expect(canonicalUrl("https://example.com/a")).not.toBe(canonicalUrl("https://example.com/b"));
+  expect(canonicalUrl("https://example.com/a?page=1")).not.toBe(canonicalUrl("https://example.com/a?page=2"));
+});
+
+it("passes an unparseable url through unchanged", () => {
+  expect(canonicalUrl("not a url")).toBe("not a url");
 });

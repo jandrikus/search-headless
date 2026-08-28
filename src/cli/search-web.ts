@@ -4,12 +4,7 @@ import { DEFAULT_CONFIG } from "../config";
 import { searchBrave } from "../search/brave";
 import { renderJson } from "../output/json";
 import { renderSearchMarkdown } from "../output/markdown";
-
-function positiveInt(value: string, name: string): number {
-  const n = Number(value);
-  if (!Number.isInteger(n) || n <= 0) throw new Error(`${name} must be a positive integer`);
-  return n;
-}
+import { emit, exitCodeFor, parseCliOptions, positiveInt } from "./shared";
 
 const program = new Command();
 
@@ -20,39 +15,24 @@ program
   .option("--fetch-limit <n>", "fetch limit", String(DEFAULT_CONFIG.fetchLimit))
   .option("--format <format>", "json|markdown", "json")
   .option("--timeout <ms>", "timeout", String(DEFAULT_CONFIG.timeoutMs))
+  .option("--concurrency <n>", "parallel fetches", String(DEFAULT_CONFIG.concurrency))
+  .option("--no-cache", "ignore cached results and do not store new ones")
+  .option("--cache-ttl <s>", "how long a cached result stays fresh, in seconds")
   .action(async (query, opts) => {
-    if (!["json", "markdown"].includes(opts.format)) {
-      console.error("Invalid format");
-      process.exit(2);
-    }
+    const parsed = parseCliOptions(opts);
 
-    let limit: number;
-    let fetchLimit: number;
-    let timeoutMs: number;
-
-    try {
-      limit = positiveInt(opts.limit, "limit");
-      fetchLimit = positiveInt(opts.fetchLimit, "fetch-limit");
-      timeoutMs = positiveInt(opts.timeout, "timeout");
-    } catch (e) {
-      console.error(e instanceof Error ? e.message : String(e));
-      process.exit(2);
-    }
-
-    const searchOptions = {
-      limit,
+    const result = await searchBrave(query, {
+      limit: positiveInt(opts.limit, "limit"),
       fetch: Boolean(opts.fetch),
-      fetchLimit,
-      timeoutMs,
+      fetchLimit: positiveInt(opts.fetchLimit, "fetch-limit"),
+      timeoutMs: parsed.timeoutMs,
+      concurrency: parsed.concurrency,
+      cache: { ...parsed.cache, ttlMs: parsed.cache.ttlMs ?? DEFAULT_CONFIG.searchCacheTtlMs },
       allowPrivateUrls: process.env.SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS === "1",
-    };
+    });
 
-    const result = await searchBrave(query, searchOptions);
-
-    process.stdout.write(
-      opts.format === "markdown" ? renderSearchMarkdown(result) : renderJson(result),
-    );
-    process.exit(result.status === "ok" || result.status === "partial" ? 0 : 1);
+    await emit(opts.format === "markdown" ? renderSearchMarkdown(result) : renderJson(result));
+    process.exit(exitCodeFor(result.status));
   });
 
 program.parse();

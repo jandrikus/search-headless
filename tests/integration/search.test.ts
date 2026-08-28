@@ -75,11 +75,16 @@ it("reports a challenge from the spawn path as blocked", async () => {
   expect(response.errors[0].code).toBe("BRAVE_CHALLENGE");
 });
 
-it("reports blocked when obscura cannot be run at all", async () => {
+/**
+ * A browser that will not start is not a bot challenge. Reporting it as one
+ * would send an agent off to wait out a block that does not exist.
+ */
+it("reports a broken obscura as an error, not as blocked", async () => {
   process.env.OBSCURA_BIN = "/nonexistent/obscura";
-  const response = await searchBrave("anything", { limit: 3, ...noRateLimit });
+  const response = await searchBrave("anything", { limit: 3, ...noRateLimit, cache: { enabled: false } });
 
-  expect(response.status).toBe("blocked");
+  expect(response.status).toBe("error");
+  expect(response.errors[0].code).toBe("OBSCURA_SEARCH_FAILED");
   expect(response.results).toHaveLength(0);
 });
 
