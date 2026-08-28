@@ -125,7 +125,7 @@ cannot be linked in. Ship the two files together.
 
 ## Pi Extension
 
-`search-headless` powers the [`pi-search-tool`](https://github.com/jandrikus/pi-extensions/tree/main/pi-search-tool) extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent). The extension adds `search` and `fetch` tools to Pi, shelling out to the CLI installed above. It calls `search-headless search` and `search-headless fetch`; extension versions predating the Rust rewrite invoked `search-web` and `fetch-content` and need updating.
+`search-headless` powers the [`pi-search-tool`](https://github.com/jandrikus/pi-extensions/tree/main/pi-search-tool) extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent). The extension adds `search` and `fetch` tools to Pi, shelling out to the CLI installed above. It calls `search-headless search` and `search-headless fetch`; versions of the extension older than the Rust rewrite invoked `search-web` and `fetch-content` and will not work.
 
 To use it, install this first (steps above), then add the extension to your Pi config:
 
