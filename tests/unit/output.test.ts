@@ -1,9 +1,9 @@
-import { expect, it } from "vitest";
+import { expect, it } from "bun:test";
 import { renderJson } from "../../src/output/json";
 import { renderFetchedMarkdown, renderSearchMarkdown } from "../../src/output/markdown";
 import type { SearchResponse, FetchedContent } from "../../src/types";
 
-const response: SearchResponse = { query: "example", engine: "google", status: "ok", results: [{ rank: 1, title: "Example", url: "https://example.com", displayUrl: "example.com", snippet: "Demo" }], errors: [] };
+const response: SearchResponse = { query: "example", engine: "brave", status: "ok", results: [{ rank: 1, title: "Example", url: "https://example.com", displayUrl: "example.com", snippet: "Demo" }], errors: [] };
 
 it("renders pretty JSON", () => expect(JSON.parse(renderJson(response))).toEqual(response));
 it("renders search markdown", () => {

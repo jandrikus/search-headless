@@ -92,14 +92,6 @@ else
   npm install
 fi
 
-# ── Install Playwright Chromium ────────────────────────────────────────────
-info "Installing Playwright Chromium (required for search-web)..."
-if [[ "$PACKAGE_MANAGER" == "bun" ]]; then
-  bunx playwright install chromium
-else
-  npx playwright install chromium
-fi
-
 # ── Link commands globally ─────────────────────────────────────────────────
 info "Linking commands globally with ${PACKAGE_MANAGER}..."
 if [[ "$PACKAGE_MANAGER" == "bun" ]]; then
@@ -135,5 +127,5 @@ done
 
 # ── Done ────────────────────────────────────────────────────────────────────
 info "Done! Try:"
-printf '  search-web "bun typescript playwright" --limit 5 --timeout 15000\n'
+printf '  search-web "bun typescript" --limit 5 --timeout 15000\n'
 printf '  fetch-content https://example.com\n'

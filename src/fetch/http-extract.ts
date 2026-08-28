@@ -4,7 +4,10 @@ import type { Deadline, FetchedContent, ToolError } from "../types";
 import { remainingMs } from "../types";
 import { assertPublicDns, validatePublicHttpUrl } from "./url-validation";
 
-export interface HttpExtractOptions { deadline: Deadline; maxChars: number; allowPrivateUrls?: boolean; allowPrivateRedirects?: boolean; resolver?: (host: string) => Promise<string[]>; }
+export interface HttpExtractOptions { deadline: Deadline; maxChars: number; allowPrivateUrls?: boolean; allowPrivateRedirects?: boolean; resolver?: (host: string) => Promise<string[]>; diagnostics?: HttpExtractDiagnostics; }
+
+/** Filled in by extractViaHttp so callers can judge whether the result is trustworthy. */
+export interface HttpExtractDiagnostics { scriptCount?: number; }
 
 export async function extractViaHttp(input: string, options: HttpExtractOptions): Promise<FetchedContent> {
   const validation = validatePublicHttpUrl(input, { allowPrivateUrls: options.allowPrivateUrls });
@@ -19,6 +22,8 @@ export async function extractViaHttp(input: string, options: HttpExtractOptions)
     const html = await response.text();
     const dom = new JSDOM(html, { url: response.url });
     const doc = dom.window.document;
+    // Recorded before Readability mutates the document.
+    if (options.diagnostics) options.diagnostics.scriptCount = doc.querySelectorAll("script").length;
     const parsed = new Readability(doc).parse();
     const text = parsed?.textContent?.trim() || doc.body?.textContent?.replace(/\s+/g, " ").trim() || "";
     if (!text) return errorResult(response.url, "error", { code: "READABILITY_FAILED", message: "Could not extract readable text.", recoverable: true });

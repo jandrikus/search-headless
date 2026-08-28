@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it } from "bun:test";
 import { validatePublicHttpUrl, isPrivateHost } from "../../src/fetch/url-validation";
 
 it("accepts public http and https urls", () => {

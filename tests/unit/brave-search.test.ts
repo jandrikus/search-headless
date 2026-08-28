@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it } from "bun:test";
 import { detectBraveBlock, parseBraveNextUrl, parseBraveResults } from "../../src/search/parse-brave";
 
 it("parses organic Brave results", async () => {
@@ -61,7 +61,6 @@ it("returns undefined when no next page", async () => {
 it("detects Brave CAPTCHA block", async () => {
   const html = await Bun.file("tests/fixtures/brave-blocked.html").text();
   const blocked = detectBraveBlock({
-    url: "https://search.brave.com/search?q=test",
     html,
     text: "Verifying you're not a bot Quick check before you continue searching.",
   });
@@ -71,10 +70,20 @@ it("detects Brave CAPTCHA block", async () => {
 
 it("does not treat normal results as blocked", () => {
   const blocked = detectBraveBlock({
-    url: "https://search.brave.com/search?q=test",
     html: "<html><body>Normal results</body></html>",
     text: "Normal results",
   });
 
   expect(blocked).toBe(false);
+});
+
+it("detects Brave interstitials that are not the CAPTCHA wording", async () => {
+  for (const text of ["Your request has been flagged.", "This page needs JavaScript to run.", "unusual traffic from your network"]) {
+    expect(detectBraveBlock({ html: "<html><body></body></html>", text })).toBe(true);
+  }
+});
+
+it("does not report a block when results parsed, even if a snippet mentions a phrase", async () => {
+  const html = await Bun.file("tests/fixtures/brave-results.html").text();
+  expect(detectBraveBlock({ html, text: "verifying you can use this library" })).toBe(false);
 });

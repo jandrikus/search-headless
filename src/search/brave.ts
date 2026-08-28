@@ -1,10 +1,10 @@
 import { DEFAULT_CONFIG } from "../config";
+import { obscuraFetch, parseObscuraJson } from "../obscura/runner";
 import type { Deadline, SearchResponse, SearchResult, ToolError } from "../types";
 import { createDeadline, remainingMs } from "../types";
-import { fetchContent } from "../fetch/fetch-content";
+import { fetchManyContent } from "../fetch/fetch-content";
 import { buildBraveSearchUrl, detectBraveBlock, parseBraveNextUrl, parseBraveResults } from "./parse-brave";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 /** Minimum seconds between searches to appear human-like. */
 const MIN_SEARCH_INTERVAL_SEC = 10;
@@ -17,6 +17,7 @@ const LAST_SEARCH_FILE = "/tmp/search-headless-last-search";
  * Uses a file in /tmp (RAM) to persist timestamp across CLI invocations.
  */
 async function waitForRateLimit(): Promise<void> {
+  if (process.env.SEARCH_HEADLESS_NO_RATE_LIMIT === "1") return;
   try {
     if (existsSync(LAST_SEARCH_FILE)) {
       const lastSearch = parseInt(readFileSync(LAST_SEARCH_FILE, "utf-8").trim(), 10);
@@ -50,242 +51,159 @@ export interface SearchBraveOptions {
   fixturePath?: string;
 }
 
-// Eval script for Obscura to extract Brave results directly from DOM
-const BRAVE_EVAL_SCRIPT = [
-  `(() => {`,
-  `  document.querySelectorAll('script,style,nav,footer,aside').forEach(el => el.remove());`,
-  `  const snippets = document.querySelectorAll('.snippet[data-type="web"]:not(.standalone)');`,
-  `  const results = Array.from(snippets).map((s, i) => {`,
-  `    const link = s.querySelector('.result-content a');`,
-  `    const titleEl = s.querySelector('.title');`,
-  `    const title = titleEl?.getAttribute('title') || titleEl?.textContent?.trim() || '';`,
-  `    const url = link?.href || '';`,
-  `    const displayUrl = s.querySelector('cite.snippet-url')?.textContent?.trim() || '';`,
-  `    const snippet = s.querySelector('.generic-snippet .content')?.textContent?.trim() || '';`,
-  `    return { rank: i + 1, title, url, displayUrl, snippet };`,
-  `  }).filter(r => r.url && r.title);`,
-  `  const nextLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent?.trim() === 'Next');`,
-  `  const nextUrl = nextLink?.href || null;`,
-  `  return JSON.stringify({ results, nextUrl, blocked: false });`,
-  `})()`,
-].join("");
-
-// Eval script to check if page is blocked by CAPTCHA
-const BRAVE_BLOCK_CHECK_SCRIPT = [
-  `(() => {`,
-  `  const text = document.body?.innerText || '';`,
-  `  const blocked = text.includes('Verifying you') || text.includes('Verify you are human');`,
-  `  return JSON.stringify({ blocked });`,
-  `})()`,
-].join("");
-
 /**
- * Search Brave using Obscura (fast, low-memory headless browser).
- * Returns null if CAPTCHA is detected (caller should fall back to Playwright).
+ * Hand the rendered page back for parsing here rather than picking results apart
+ * in the page.
+ *
+ * Nothing is stripped and nothing is clicked. Stripping in-page is what breaks
+ * pagination, because Brave's "Next" link sits in the footer; and the project
+ * does not work around challenges, so a verify control is left alone and
+ * reported instead.
  */
-async function searchBraveWithObscura(
-  query: string,
-  limit: number,
-  deadline: Deadline,
-): Promise<{ results: SearchResult[]; nextUrl: string | null; blocked: boolean } | null> {
-  const timeout = remainingMs(deadline);
-  if (timeout <= 10) return null;
+export const READ_SERP_SCRIPT = [
+  `(() => JSON.stringify({`,
+  `  html: document.documentElement.outerHTML,`,
+  `  text: document.body ? document.body.textContent || '' : '',`,
+  `  url: window.location.href,`,
+  `}))()`,
+].join("");
 
-  const url = buildBraveSearchUrl(query);
-  const waitSecs = Math.max(1, Math.min(10, Math.ceil(timeout / 1000)));
-
-  try {
-    const proc = Bun.spawn(
-      [
-        "obscura", "fetch", url,
-        "--quiet", "--stealth",
-        "--wait", String(waitSecs),
-        "--timeout", String(Math.max(1, Math.ceil(timeout / 1000))),
-        "--eval", BRAVE_EVAL_SCRIPT,
-      ],
-      { stdout: "pipe", stderr: "pipe", timeout: Math.max(1000, timeout) },
-    );
-
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0 || !stdout.trim()) return null;
-
-    const parsed = JSON.parse(stdout.trim());
-    if (parsed.blocked) return null;
-
-    return {
-      results: parsed.results || [],
-      nextUrl: parsed.nextUrl || null,
-      blocked: false,
-    };
-  } catch {
-    return null;
-  }
+interface SerpPage {
+  html: string;
+  text: string;
+  url: string;
 }
 
-/**
- * Search Brave using Playwright (full browser with CAPTCHA solving).
- * Used as fallback when Obscura hits a CAPTCHA.
- */
-async function searchBraveWithPlaywright(
-  query: string,
-  limit: number,
-  deadline: Deadline,
-): Promise<{ results: SearchResult[]; nextUrl: string | null }> {
-  const { chromium } = await import("playwright");
+/** Load one Brave SERP through obscura. */
+async function loadSerp(url: string, deadline: Deadline): Promise<SerpPage | null> {
+  const result = await obscuraFetch({ url, deadline, evalScript: READ_SERP_SCRIPT, stealth: true });
+  if (!result.ok) return null;
+  return parseObscuraJson<SerpPage>(result.stdout);
+}
 
-  const timeout = remainingMs(deadline);
-  if (timeout <= 10) return { results: [], nextUrl: null };
+function blockedResponse(query: string, message: string, results: SearchResult[] = []): SearchResponse {
+  return {
+    query,
+    engine: "brave",
+    status: "blocked",
+    results,
+    errors: [{ code: "BRAVE_CHALLENGE", message, recoverable: true }],
+  };
+}
 
-  const browser = await chromium.launch({ headless: true });
-  try {
-    const context = await browser.newContext({
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
-    });
-
-    // Set cookies for English + All regions
-    await context.addCookies([
-      { name: "country", value: "all", domain: ".search.brave.com", path: "/" },
-      { name: "ui_lang", value: "en-us", domain: ".search.brave.com", path: "/" },
-    ]);
-
-    const page = await context.newPage();
-    const url = buildBraveSearchUrl(query);
-
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: Math.max(1, remainingMs(deadline)),
-    });
-
-    // Wait for content to render
-    await page.waitForTimeout(3000);
-
-    // Check for CAPTCHA and solve it
-    const blocked = await page.evaluate(() => {
-      const text = document.body?.innerText || "";
-      return text.includes("Verifying you") || text.includes("Verify you are human");
-    });
-
-    if (blocked) {
-      // Click the Verify button
-      const verifyBtn = page.locator('button:has-text("Verify")');
-      if (await verifyBtn.isVisible().catch(() => false)) {
-        await verifyBtn.click();
-        // Wait for verification to complete
-        await page.waitForTimeout(10000);
-      }
-    }
-
-    // Extract results using the eval script
-    const extracted = await page.evaluate(() => {
-      document.querySelectorAll('script,style,nav,footer,aside').forEach(el => el.remove());
-      const snippets = document.querySelectorAll('.snippet[data-type="web"]:not(.standalone)');
-      const results = Array.from(snippets).map((s, i) => {
-        const link = s.querySelector('.result-content a') as HTMLAnchorElement | null;
-        const titleEl = s.querySelector('.title');
-        const title = titleEl?.getAttribute('title') || titleEl?.textContent?.trim() || '';
-        const url = link?.href || '';
-        const displayUrl = s.querySelector('cite.snippet-url')?.textContent?.trim() || '';
-        const snippet = s.querySelector('.generic-snippet .content')?.textContent?.trim() || '';
-        return { rank: i + 1, title, url, displayUrl, snippet };
-      }).filter(r => r.url && r.title);
-      const nextLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent?.trim() === 'Next');
-      const nextUrl = (nextLink as HTMLAnchorElement)?.href || null;
-      return JSON.stringify({ results, nextUrl, blocked: false });
-    }).catch(() => null);
-    if (!extracted) return { results: [], nextUrl: null };
-
-    const parsed = JSON.parse(extracted);
-    return {
-      results: parsed.results || [],
-      nextUrl: parsed.nextUrl || null,
-    };
-  } finally {
-    await browser.close().catch(() => undefined);
+/** Read SERP pages from a fixture instead of the network, for tests. */
+async function loadFixtureSerp(fixturePath: string): Promise<SerpPage[]> {
+  const html = await Bun.file(fixturePath).text();
+  const pages: SerpPage[] = [{ html, text: html, url: "https://search.brave.com/search" }];
+  const second = process.env.SEARCH_HEADLESS_BRAVE_FIXTURE_2;
+  if (second) {
+    const html2 = await Bun.file(second).text();
+    pages.push({ html: html2, text: html2, url: "https://search.brave.com/search?offset=1" });
   }
+  return pages;
 }
 
 /**
  * Main Brave Search function.
- * Tries Obscura first, falls back to Playwright for CAPTCHA solving.
+ *
+ * Obscura is the only engine. If Brave serves a challenge instead of results,
+ * that is reported as `status: "blocked"` — never as an empty success, and never
+ * worked around.
  */
 export async function searchBrave(query: string, options: SearchBraveOptions = {}): Promise<SearchResponse> {
   const limit = options.limit ?? DEFAULT_CONFIG.searchLimit;
   const deadline = options.deadline ?? createDeadline(options.timeoutMs ?? DEFAULT_CONFIG.timeoutMs);
+  const fixture = options.fixturePath ?? process.env.SEARCH_HEADLESS_BRAVE_FIXTURE;
   const errors: ToolError[] = [];
 
-  // Rate limit: wait if last search was too recent
-  await waitForRateLimit();
-
   try {
-    // Try Obscura first (fast, low memory)
-    let obscuraResult = await searchBraveWithObscura(query, limit, deadline);
+    const fixturePages = fixture ? await loadFixtureSerp(fixture) : null;
 
-    // If Obscura hit a CAPTCHA, fall back to Playwright
-    if (obscuraResult === null || obscuraResult.blocked) {
-      errors.push({
-        code: "OBSCURA_CAPTCHA_FALLBACK",
-        message: "Obscura encountered a CAPTCHA, falling back to Playwright.",
-        recoverable: true,
-      });
-
-      const playwrightResult = await searchBraveWithPlaywright(query, limit, deadline);
-      obscuraResult = { ...playwrightResult, blocked: false };
+    let first: SerpPage | null;
+    if (fixturePages) {
+      first = fixturePages[0] ?? null;
+    } else {
+      await waitForRateLimit();
+      first = await loadSerp(buildBraveSearchUrl(query), deadline);
     }
 
-    // Collect results, handling pagination
+    if (!first) return blockedResponse(query, "Brave Search did not return a readable results page.");
+    if (detectBraveBlock(first)) {
+      return blockedResponse(query, "Brave Search served a bot challenge instead of results.");
+    }
+
     const allResults: SearchResult[] = [];
     const seen = new Set<string>();
 
-    // Add first page results
-    for (const result of obscuraResult.results) {
-      if (seen.has(result.url) || allResults.length >= limit) continue;
-      seen.add(result.url);
-      result.rank = allResults.length + 1;
-      allResults.push(result);
-    }
-
-    // Fetch additional pages if needed
-    let nextUrl = obscuraResult.nextUrl;
-    while (allResults.length < limit && nextUrl && remainingMs(deadline) > 0) {
-      // For pagination, we use Obscura (Playwright fallback would be too slow for multiple pages)
-      const pageResult = await fetchBravePage(nextUrl, deadline);
-      if (!pageResult || pageResult.results.length === 0) break;
-
-      for (const result of pageResult.results) {
+    const collect = (serp: SerpPage) => {
+      for (const result of parseBraveResults(serp.html, limit)) {
         if (seen.has(result.url) || allResults.length >= limit) continue;
         seen.add(result.url);
         result.rank = allResults.length + 1;
         allResults.push(result);
       }
-      nextUrl = pageResult.nextUrl;
+    };
+
+    collect(first);
+
+    // Follow pagination until the limit is met.
+    let nextUrl = parseBraveNextUrl(first.html);
+    let fixtureIndex = 1;
+    let blockedWhilePaginating = false;
+
+    while (allResults.length < limit && remainingMs(deadline) > 2000) {
+      let serp: SerpPage | null = null;
+      if (fixturePages) {
+        serp = fixturePages[fixtureIndex++] ?? null;
+      } else if (nextUrl) {
+        serp = await loadSerp(nextUrl, deadline);
+      }
+      if (!serp) break;
+
+      if (detectBraveBlock(serp)) {
+        blockedWhilePaginating = true;
+        errors.push({
+          code: "BRAVE_CHALLENGE",
+          message: "Brave Search served a bot challenge while paginating.",
+          recoverable: true,
+        });
+        break;
+      }
+
+      const before = allResults.length;
+      collect(serp);
+      nextUrl = parseBraveNextUrl(serp.html);
+      if (allResults.length === before) break; // no progress
     }
 
-    const response: SearchResponse = {
+    // Optionally fetch content for top results, concurrently.
+    let fetchFailed = false;
+    if (options.fetch && allResults.length > 0) {
+      const n = Math.min(options.fetchLimit ?? DEFAULT_CONFIG.fetchLimit, allResults.length);
+      const targets = allResults.slice(0, n);
+      const fetched = await fetchManyContent(
+        targets.map((r) => r.url),
+        { deadline, allowPrivateUrls: options.allowPrivateUrls },
+      );
+      fetched.forEach((content, i) => {
+        targets[i].fetched = content;
+        if (content.status !== "ok") fetchFailed = true;
+      });
+    }
+
+    // A challenge outranks a fetch failure: a later --fetch problem must not
+    // downgrade "blocked" to "partial" and turn a non-zero exit into success.
+    if (blockedWhilePaginating) {
+      return { query, engine: "brave", status: "blocked", results: allResults, errors };
+    }
+
+    return {
       query,
       engine: "brave",
-      status: errors.length > 0 ? "partial" : "ok",
+      status: errors.length > 0 || fetchFailed ? "partial" : "ok",
       results: allResults,
       errors,
     };
-
-    // Optionally fetch content for top results
-    if (options.fetch) {
-      let partial = response.status === "partial";
-      const n = Math.min(options.fetchLimit ?? DEFAULT_CONFIG.fetchLimit, allResults.length);
-      for (let i = 0; i < n; i++) {
-        allResults[i].fetched = await fetchContent(allResults[i].url, {
-          deadline,
-          allowPrivateUrls: options.allowPrivateUrls,
-        });
-        if (allResults[i].fetched!.status !== "ok") partial = true;
-      }
-      if (partial) response.status = "partial";
-    }
-
-    return response;
   } catch (e) {
     const err = e as ToolError;
     return {
@@ -295,52 +213,11 @@ export async function searchBrave(query: string, options: SearchBraveOptions = {
       results: [],
       errors: [
         {
-          code: remainingMs(deadline) <= 0 ? "FETCH_TIMEOUT" : "UNKNOWN_ERROR",
+          code: err?.code ?? (remainingMs(deadline) <= 0 ? "FETCH_TIMEOUT" : "UNKNOWN_ERROR"),
           message: err?.message || String(e),
-          recoverable: true,
+          recoverable: err?.recoverable ?? true,
         },
       ],
     };
-  }
-}
-
-/**
- * Fetch a single Brave Search results page using Obscura.
- */
-async function fetchBravePage(
-  url: string,
-  deadline: Deadline,
-): Promise<{ results: SearchResult[]; nextUrl: string | null } | null> {
-  const timeout = remainingMs(deadline);
-  if (timeout <= 10) return null;
-
-  const waitSecs = Math.max(1, Math.min(10, Math.ceil(timeout / 1000)));
-
-  try {
-    const proc = Bun.spawn(
-      [
-        "obscura", "fetch", url,
-        "--quiet", "--stealth",
-        "--wait", String(waitSecs),
-        "--timeout", String(Math.max(1, Math.ceil(timeout / 1000))),
-        "--eval", BRAVE_EVAL_SCRIPT,
-      ],
-      { stdout: "pipe", stderr: "pipe", timeout: Math.max(1000, timeout) },
-    );
-
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0 || !stdout.trim()) return null;
-
-    const parsed = JSON.parse(stdout.trim());
-    if (parsed.blocked) return null;
-
-    return {
-      results: parsed.results || [],
-      nextUrl: parsed.nextUrl || null,
-    };
-  } catch {
-    return null;
   }
 }

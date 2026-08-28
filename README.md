@@ -7,7 +7,6 @@ Bun + TypeScript CLI tools for LLM coding agents that need web search and page c
 ```bash
 search-web "query"                              # Brave Search (default)
 search-web "query" --fetch --fetch-limit 5      # Search + fetch top results
-search-web "query" --google --no-human          # Google Search (legacy)
 fetch-content "https://example.com/article"     # Extract page content
 ```
 
@@ -15,12 +14,12 @@ Default output is JSON on stdout. Diagnostics and human-readable progress go to 
 
 ## Search Engines
 
-| Engine | Default | Backend | CAPTCHA | Login |
-|--------|---------|---------|---------|-------|
-| **Brave** | ✅ Yes | Obscura | Auto-solved | Not required |
-| **Google** | `--google` flag | Playwright | Human-in-the-loop | Browser profile |
+| Engine | Backend | Challenge | Login |
+|--------|---------|-----------|-------|
+| **Brave** | Obscura | Reported as `blocked`, never solved | Not required |
 
-Brave Search is the default — fast, lightweight, no session management needed. Region: all, Language: English.
+Brave is the only engine. Obscura is the only browser — there is no Playwright, and no Chromium download.
+Region: all, Language: English.
 
 ## Rate Limiting
 
@@ -60,7 +59,6 @@ cd ~/dev/search-headless
 - Detects `bun` or `npm` (prefers bun, falls back to npm)
 - Installs `obscura` automatically if not found
 - Installs dependencies
-- Installs Playwright Chromium (for Google fallback)
 - Links commands globally (`bun link` / `npm link`)
 
 After installation, verify the commands are globally available:
@@ -97,7 +95,7 @@ During development, you can still run commands directly:
 
 ```bash
 bun run src/cli/search-web.ts "bun typescript" --limit 3
-bun run src/cli/search-web.ts "bun typescript" --limit 3 --google --no-human
+bun run src/cli/search-web.ts "bun typescript" --limit 3
 bun run src/cli/fetch-content.ts https://example.com
 ```
 
@@ -114,9 +112,6 @@ Options:
 --fetch                  Fetch content for top results.
 --fetch-limit <n>        Number of result URLs to fetch. Default: 5.
 --format <json|markdown> Output format. Default: json.
---google                 Use Google instead of Brave.
---headful                Force visible browser (Google only).
---no-human               Fail fast on CAPTCHA (Google only).
 --timeout <ms>           Overall timeout. Default: 60000.
 ```
 
@@ -134,17 +129,30 @@ Options:
 --max-chars <n>          Truncate returned text. Default: 50000.
 ```
 
-`fetch-content` uses `obscura fetch --stealth` to extract readable text, title, and metadata from any URL. Requires `obscura` on PATH.
+`fetch-content` extracts in two tiers. Plain HTTP + Readability runs first: it is cheaper and gives better text, plus byline, excerpt and published time. Obscura runs second, for pages whose content is rendered by JavaScript. Requires `obscura` on PATH.
 
-## Human intervention
+## How obscura is driven
 
-**Brave (default)**: CAPTCHA is solved automatically by clicking the "Verify" button — no human needed.
+Every obscura invocation goes through one wrapper, `src/obscura/runner.ts`, so argument
+construction and deadline clamping stay in a single place. Each fetch is its own `obscura fetch`
+process, which parallelizes better than a shared daemon would: obscura serializes page work
+within a process, so N processes genuinely beat one.
 
-**Google (with `--google`)**: Uses Playwright Chromium with a persistent profile. If Google shows consent, CAPTCHA, or unusual-traffic pages, the tool opens a visible browser for manual challenge solving. With `--no-human`, fails fast with structured JSON.
+Point `OBSCURA_BIN` at another executable to run the suite against a stand-in binary.
+
+## Challenges
+
+If Brave serves a bot challenge, or any other interstitial in place of results, the command
+reports `status: "blocked"` with a `BRAVE_CHALLENGE` error and exits non-zero. It never reports an
+empty result set as success, and a challenge stays terminal — a later `--fetch` failure cannot
+downgrade it to `partial`.
+
+Challenges are reported, not solved. Nothing is clicked, and obscura has no layout or paint
+engine, so there is no visible window and no human-in-the-loop path either.
 
 ## Safety boundary
 
-This project does not implement CAPTCHA solving, stealth plugins, browser fingerprint spoofing, proxy rotation, or automatic anti-bot circumvention. It uses normal browser automation and graceful human-in-the-loop recovery.
+This project does not implement CAPTCHA solving, browser fingerprint spoofing, proxy rotation, or automatic anti-bot circumvention. It runs obscura with `--stealth` and otherwise stops at any challenge and reports `blocked`.
 
 ## Private URL blocking
 

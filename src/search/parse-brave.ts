@@ -85,12 +85,32 @@ export function parseBraveNextUrl(html: string): string | undefined {
 }
 
 /**
- * Detect if the Brave Search page is showing a CAPTCHA.
- * Brave shows "Verifying you're not a bot" with a "Verify" button.
+ * Phrases Brave uses on its interstitials.
+ *
+ * The CAPTCHA wording is only one of several: a flagged request or a
+ * JavaScript-required notice is just as much a block, and matching only the
+ * CAPTCHA text reports those pages as an empty success.
  */
-export function detectBraveBlock({ url, html, text }: { url: string; html: string; text: string }): boolean {
-  const lowerText = text.toLowerCase();
-  return lowerText.includes("verifying you") || lowerText.includes("verify you are human");
+const BLOCK_PHRASES = [
+  "verifying you",
+  "verify you are human",
+  "not a robot",
+  "request has been flagged",
+  "unusual traffic",
+  "needs javascript",
+  "enable javascript",
+];
+
+/**
+ * Detect if the Brave Search page is an interstitial rather than results.
+ *
+ * Only treated as a block when no results were parsed: a page can mention one of
+ * these phrases in a snippet without being a challenge.
+ */
+export function detectBraveBlock({ html, text }: { html: string; text: string }): boolean {
+  const haystack = (text || "").toLowerCase();
+  if (!BLOCK_PHRASES.some((phrase) => haystack.includes(phrase))) return false;
+  return parseBraveResults(html, 1).length === 0;
 }
 
 /**

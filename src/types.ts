@@ -10,5 +10,5 @@ export function remainingMs(deadline: Deadline): number { return Math.max(0, dea
 export interface AppConfig { searchLimit: number; fetchLimit: number; timeoutMs: number; maxChars: number; humanIntervention: boolean; profileDir: string; lockFile: string; }
 export interface FetchedContent { url: string; status: CommandStatus; title?: string; siteName?: string; byline?: string; publishedTime?: string; excerpt?: string; text?: string; method?: FetchMethod; truncated?: boolean; textLength?: number; errors: ToolError[]; }
 export interface SearchResult { rank: number; title: string; url: string; displayUrl?: string; snippet?: string; fetched?: FetchedContent; }
-export type SearchEngine = "google" | "brave";
+export type SearchEngine = "brave";
 export interface SearchResponse { query: string; engine: SearchEngine; status: CommandStatus; results: SearchResult[]; errors: ToolError[]; }

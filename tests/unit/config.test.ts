@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it } from "bun:test";
 import { DEFAULT_CONFIG } from "../../src/config";
 
 it("defines agent-friendly defaults", () => {

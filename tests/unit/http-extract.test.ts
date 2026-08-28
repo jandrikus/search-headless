@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it } from "bun:test";
 import { extractViaHttp } from "../../src/fetch/http-extract";
 import { createDeadline } from "../../src/types";
 const servers: ReturnType<typeof Bun.serve>[] = [];
