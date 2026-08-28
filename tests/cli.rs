@@ -1,6 +1,6 @@
 //! End-to-end tests that run the real binary, the way an agent calls it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Output;
 
 use search_headless::testing::{self, TestServer};
@@ -273,46 +273,4 @@ fn rejects_a_nonsense_flag_value_before_doing_any_work() {
 
     assert_eq!(run.exit_code, 2);
     assert!(run.stderr.contains("positive integer"), "{}", run.stderr);
-}
-
-#[test]
-fn answers_to_the_search_web_and_fetch_content_names() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let link = |name: &str| -> PathBuf {
-        let path = dir.path().join(name);
-        std::os::unix::fs::symlink(BINARY, &path).expect("symlink");
-        path
-    };
-
-    let search = std::process::Command::new(link("search-web")).arg("--help").output().expect("run");
-    let search = finish(search);
-    assert_eq!(search.exit_code, 0);
-    assert!(search.stdout.contains("--limit"), "{}", search.stdout);
-    assert!(search.stdout.contains("search-web"), "{}", search.stdout);
-
-    let fetch = std::process::Command::new(link("fetch-content")).arg("--help").output().expect("run");
-    let fetch = finish(fetch);
-    assert_eq!(fetch.exit_code, 0);
-    assert!(fetch.stdout.contains("--max-chars"), "{}", fetch.stdout);
-    assert!(fetch.stdout.contains("fetch-content"), "{}", fetch.stdout);
-}
-
-#[test]
-fn the_search_web_symlink_runs_a_search_without_a_subcommand() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let link = dir.path().join("search-web");
-    std::os::unix::fs::symlink(BINARY, &link).expect("symlink");
-    let sandbox = tempfile::tempdir().expect("tempdir");
-
-    let output = std::process::Command::new(&link)
-        .args(["example", "--limit", "2"])
-        .env("SEARCH_HEADLESS_CACHE_DIR", sandbox.path().join("cache"))
-        .env("SEARCH_HEADLESS_NO_RATE_LIMIT", "1")
-        .env("SEARCH_HEADLESS_BRAVE_FIXTURE", fixture("brave-results.html"))
-        .output()
-        .expect("run");
-    let run = finish(output);
-
-    assert_eq!(run.exit_code, 0, "{}", run.stderr);
-    assert_eq!(run.json()["results"].as_array().unwrap().len(), 2);
 }

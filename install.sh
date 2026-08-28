@@ -71,16 +71,9 @@ info "Building with cargo ($(cargo --version))..."
 cd "$PROJECT_DIR"
 cargo build --release
 
-# ── Install the binary and its aliases ──────────────────────────────────────
+# ── Install the binary ──────────────────────────────────────────────────────
 mkdir -p "$BIN_DIR"
 install -m 755 "${PROJECT_DIR}/target/release/search-headless" "${BIN_DIR}/search-headless"
-
-# The binary dispatches on the name it is invoked under, so these symlinks are
-# the whole of `search-web` and `fetch-content`.
-for alias in search-web fetch-content; do
-  ln -sf "${BIN_DIR}/search-headless" "${BIN_DIR}/${alias}"
-  info "${alias} -> ${BIN_DIR}/search-headless"
-done
 
 if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
   warn "${BIN_DIR} is not on PATH."
@@ -89,18 +82,16 @@ if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
 fi
 
 # ── Verify ──────────────────────────────────────────────────────────────────
-info "Verifying installed commands..."
-for cmd in search-headless search-web fetch-content; do
-  if command -v "$cmd" >/dev/null 2>&1; then
-    info "$cmd -> $(command -v "$cmd")"
-  else
-    warn "$cmd is not visible on PATH in this shell yet. Open a new shell or update PATH."
-  fi
-done
+info "Verifying the installed command..."
+if command -v search-headless >/dev/null 2>&1; then
+  info "search-headless -> $(command -v search-headless)"
+else
+  warn "search-headless is not visible on PATH in this shell yet. Open a new shell or update PATH."
+fi
 
 # ── Done ────────────────────────────────────────────────────────────────────
 info "Done! Try:"
-printf '  search-web "bun typescript" --limit 5 --timeout 15000\n'
-printf '  fetch-content https://example.com\n'
+printf '  search-headless search "rust async" --limit 5 --timeout 15000\n'
+printf '  search-headless fetch https://example.com\n'
 printf '\nThe binary at %s is self-contained apart from libc.\n' "${BIN_DIR}/search-headless"
 printf 'See the README for a fully static musl build.\n'

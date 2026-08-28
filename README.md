@@ -2,18 +2,15 @@
 
 A single Rust binary for LLM coding agents that need web search and page content extraction via bash-callable commands.
 
-One executable, no runtime to install. It answers to three names: `search-headless` with `search` and `fetch` subcommands, and the `search-web` / `fetch-content` symlinks that `install.sh` drops beside it.
+One executable, no runtime to install, two subcommands: `search` and `fetch`.
 
 ## Commands
 
 ```bash
-search-web "query"                              # Brave Search
-search-web "query" --fetch --fetch-limit 5      # Search + fetch top results
-fetch-content "https://example.com/article"     # Extract page content
-fetch-content url-a url-b url-c                 # Fetch several pages in parallel
-
-search-headless search "query" --limit 5        # the same thing, spelled out
-search-headless fetch https://example.com
+search-headless search "query"                           # Brave Search
+search-headless search "query" --fetch --fetch-limit 5   # Search + fetch top results
+search-headless fetch "https://example.com/article"      # Extract page content
+search-headless fetch url-a url-b url-c                  # Fetch several pages in parallel
 ```
 
 Default output is JSON on stdout. Diagnostics and human-readable progress go to stderr. Markdown output is available with `--format markdown`.
@@ -31,7 +28,7 @@ Region: all, Language: English.
 
 Brave searches are spaced 10 seconds apart to avoid triggering bot detection. The timestamp lives in
 `/tmp/search-headless-last-search`, and the whole read-wait-stamp sequence runs under a lock file, so
-two `search-web` processes started at the same moment queue up instead of both reading the same old
+two `search` processes started at the same moment queue up instead of both reading the same old
 timestamp and firing together.
 
 If the required wait is longer than the remaining `--timeout`, the command reports `timeout` rather
@@ -52,8 +49,8 @@ Only `ok` results are stored: a `blocked` SERP or a failed fetch is never cached
 ones are swept in the background as new entries are written.
 
 ```bash
-search-web "query" --no-cache            # ignore and do not write the cache
-search-web "query" --cache-ttl 60        # treat entries older than 60s as stale
+search-headless search "query" --no-cache      # ignore and do not write the cache
+search-headless search "query" --cache-ttl 60  # treat entries older than 60s as stale
 rm -rf ~/.cache/search-headless          # drop everything
 ```
 
@@ -61,15 +58,15 @@ Set `SEARCH_HEADLESS_NO_CACHE=1` to disable it process-wide, or `SEARCH_HEADLESS
 
 ## Output Formats
 
-Both commands support `--format json` (default) and `--format markdown`:
+Both subcommands support `--format json` (default) and `--format markdown`:
 
 ```bash
 # JSON (default) — structured, machine-readable
-search-web "query" --format json
+search-headless search "query" --format json
 
 # Markdown — human/LLM-friendly, readable
-search-web "query" --format markdown
-fetch-content "url" --format markdown
+search-headless search "query" --format markdown
+search-headless fetch "url" --format markdown
 ```
 
 ## Install on a machine
@@ -92,16 +89,16 @@ cd ~/dev/search-headless
 
 - Installs `obscura` automatically if not found
 - `cargo build --release`
-- Copies the binary to `~/.local/bin` and symlinks `search-web` and `fetch-content` beside it
+- Copies the binary to `~/.local/bin`
 
-After installation, verify the commands are globally available:
+After installation, verify the command is globally available:
 
 ```bash
-search-web "bun typescript" --limit 5 --timeout 15000
-fetch-content https://example.com --max-chars 500
+search-headless search "rust async" --limit 5 --timeout 15000
+search-headless fetch https://example.com --max-chars 500
 ```
 
-If the commands are not found, put the install directory on PATH:
+If it is not found, put the install directory on PATH:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -128,7 +125,7 @@ cannot be linked in. Ship the two files together.
 
 ## Pi Extension
 
-`search-headless` powers the [`pi-search-tool`](https://github.com/jandrikus/pi-extensions/tree/main/pi-search-tool) extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent). The extension adds `search` and `fetch` tools to Pi, using the CLI commands installed above.
+`search-headless` powers the [`pi-search-tool`](https://github.com/jandrikus/pi-extensions/tree/main/pi-search-tool) extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent). The extension adds `search` and `fetch` tools to Pi, shelling out to the CLI installed above. It calls `search-headless search` and `search-headless fetch`; extension versions predating the Rust rewrite invoked `search-web` and `fetch-content` and need updating.
 
 To use it, install this first (steps above), then add the extension to your Pi config:
 
@@ -147,10 +144,10 @@ cargo run -- search "bun typescript" --limit 3
 cargo run -- fetch https://example.com https://bun.sh
 ```
 
-## `search-web`
+## `search-headless search`
 
 ```bash
-search-web "<query>" [options]
+search-headless search "<query>" [options]
 ```
 
 Options:
@@ -166,10 +163,10 @@ Options:
 --cache-ttl <s>          Freshness window for cached results, in seconds.
 ```
 
-## `fetch-content`
+## `search-headless fetch`
 
 ```bash
-fetch-content "<url>" [<url>...] [options]
+search-headless fetch "<url>" [<url>...] [options]
 ```
 
 Options:
@@ -242,7 +239,7 @@ This project does not implement CAPTCHA solving, browser fingerprint spoofing, p
 
 ## Private URL blocking
 
-`fetch-content` rejects localhost and private network URLs by default, including common IPv4 private ranges, link-local addresses, loopback, and local IPv6 ranges. Test-only local server access uses `SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS=1` and is not a normal user-facing flag.
+`fetch` rejects localhost and private network URLs by default, including common IPv4 private ranges, link-local addresses, loopback, and local IPv6 ranges. Test-only local server access uses `SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS=1` and is not a normal user-facing flag.
 
 ## Exit codes
 

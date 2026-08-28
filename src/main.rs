@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use search_headless::cache::CacheOptions;
@@ -20,9 +18,6 @@ enum Format {
 }
 
 /// Web search and page content extraction for LLM coding agents.
-///
-/// Also answers to the names `search-web` and `fetch-content`: symlink this
-/// binary under either name and it runs that subcommand directly.
 #[derive(Debug, Parser)]
 #[command(name = "search-headless", version, about, long_about = None)]
 struct Cli {
@@ -36,22 +31,6 @@ enum Command {
     Search(SearchArgs),
     /// Extract readable content from one or more URLs.
     Fetch(FetchArgs),
-}
-
-/// Entry point when the binary is invoked as `search-web`.
-#[derive(Debug, Parser)]
-#[command(name = "search-web", version, about = "Search the web through Brave.")]
-struct SearchCli {
-    #[command(flatten)]
-    args: SearchArgs,
-}
-
-/// Entry point when the binary is invoked as `fetch-content`.
-#[derive(Debug, Parser)]
-#[command(name = "fetch-content", version, about = "Extract readable content from one or more URLs.")]
-struct FetchCli {
-    #[command(flatten)]
-    args: FetchArgs,
 }
 
 #[derive(Debug, Args)]
@@ -141,28 +120,9 @@ fn allow_private_urls() -> bool {
     std::env::var("SEARCH_HEADLESS_ALLOW_PRIVATE_URLS_FOR_TESTS").as_deref() == Ok("1")
 }
 
-/// Busybox-style dispatch: the name the binary was invoked under picks the
-/// subcommand, so the `search-web` and `fetch-content` symlinks keep working.
-fn command_from_argv0() -> Option<&'static str> {
-    let argv0 = std::env::args_os().next()?;
-    match Path::new(&argv0).file_stem()?.to_str()? {
-        "search-web" => Some("search"),
-        "fetch-content" => Some("fetch"),
-        _ => None,
-    }
-}
-
-fn parse_command() -> Command {
-    match command_from_argv0() {
-        Some("search") => Command::Search(SearchCli::parse().args),
-        Some("fetch") => Command::Fetch(FetchCli::parse().args),
-        _ => Cli::parse().command,
-    }
-}
-
 #[tokio::main]
 async fn main() {
-    let code = match parse_command() {
+    let code = match Cli::parse().command {
         Command::Search(args) => run_search(args).await,
         Command::Fetch(args) => run_fetch(args).await,
     };
