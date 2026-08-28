@@ -270,6 +270,15 @@ Two tests drive the real `obscura` binary - one for each script that runs inside
 themselves when it is not installed. Everything else uses a stand-in binary or a local HTTP server,
 so the suite needs no network.
 
+## How this was built
+
+The code here was written by an AI coding agent. The thinking was not.
+
+Worth knowing if you are reading the source or considering a patch: the comments
+explain reasoning that was argued out rather than discovered by the code, and the
+test suite is deliberately built around the failures that actually happened, not
+around coverage.
+
 ## License
 
 Apache-2.0. See [LICENSE](./LICENSE).
