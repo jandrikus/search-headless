@@ -4,6 +4,10 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${HOME}/.local/bin"
 
+# Tracks obscura's newest release. Set OBSCURA_VERSION to a tag to hold a
+# specific one instead, e.g. OBSCURA_VERSION=v0.2.1 ./install.sh
+OBSCURA_VERSION="${OBSCURA_VERSION:-latest}"
+
 info() {
   printf '\033[1;34m[search-headless]\033[0m %s\n' "$*"
 }
@@ -39,16 +43,50 @@ if ! command -v obscura >/dev/null 2>&1; then
   esac
 
   OBS_TARBALL="obscura-${OBS_ARCH}-${OBS_OS}.tar.gz"
-  OBS_URL="https://github.com/h4ckf0r0day/obscura/releases/latest/download/${OBS_TARBALL}"
+  # GitHub spells the two cases differently: `latest/download/ASSET`, but
+  # `download/TAG/ASSET` for a named release.
+  if [[ "$OBSCURA_VERSION" == "latest" ]]; then
+    OBS_URL="https://github.com/h4ckf0r0day/obscura/releases/latest/download/${OBS_TARBALL}"
+  else
+    OBS_URL="https://github.com/h4ckf0r0day/obscura/releases/download/${OBSCURA_VERSION}/${OBS_TARBALL}"
+  fi
 
-  info "Downloading obscura from ${OBS_URL}..."
+  # Land the archive on disk before unpacking it. Piping the download straight
+  # into tar extracts a stream nobody has seen, and leaves a truncated transfer
+  # indistinguishable from a complete one.
+  OBS_TMP="$(mktemp -d)"
+  trap 'rm -rf "$OBS_TMP"' EXIT
+
+  info "Downloading obscura ${OBSCURA_VERSION} from ${OBS_URL}..."
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$OBS_URL" | tar -xz -C "$BIN_DIR"
+    curl -fsSL "$OBS_URL" -o "${OBS_TMP}/${OBS_TARBALL}"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- "$OBS_URL" | tar -xz -C "$BIN_DIR"
+    wget -qO "${OBS_TMP}/${OBS_TARBALL}" "$OBS_URL"
   else
     fail "Neither curl nor wget found. Install obscura manually from https://github.com/h4ckf0r0day/obscura"
   fi
+
+  # Upstream publishes no checksum manifest, so we cannot verify against the
+  # project. Print what we got, and enforce a digest when the caller pins one.
+  OBS_SUM=""
+  if command -v sha256sum >/dev/null 2>&1; then
+    OBS_SUM="$(sha256sum "${OBS_TMP}/${OBS_TARBALL}" | cut -d' ' -f1)"
+  elif command -v shasum >/dev/null 2>&1; then
+    OBS_SUM="$(shasum -a 256 "${OBS_TMP}/${OBS_TARBALL}" | cut -d' ' -f1)"
+  fi
+
+  if [[ -n "${OBSCURA_SHA256:-}" ]]; then
+    [[ -n "$OBS_SUM" ]] || fail "OBSCURA_SHA256 is set but no sha256sum/shasum is available to check it."
+    [[ "$OBS_SUM" == "$OBSCURA_SHA256" ]] || fail "Checksum mismatch for ${OBS_TARBALL}.
+  expected ${OBSCURA_SHA256}
+  got      ${OBS_SUM}"
+    info "Checksum verified."
+  elif [[ -n "$OBS_SUM" ]]; then
+    info "SHA256 ${OBS_SUM}"
+    warn "Not verified. Pin it with OBSCURA_SHA256=<digest> to enforce this exact build."
+  fi
+
+  tar -xzf "${OBS_TMP}/${OBS_TARBALL}" -C "$BIN_DIR"
 
   # Ensure the binary is on PATH for this session.
   if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then

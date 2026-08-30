@@ -91,6 +91,21 @@ cd ~/dev/search-headless
 - `cargo build --release`
 - Copies the binary to `~/.local/bin`
 
+The obscura download tracks upstream's newest release, so a fresh install picks up their latest
+build without this repo changing.
+Upstream publishes no checksum manifest, so the script prints the SHA256 of what it got and warns
+that nothing verified it.
+To hold one specific build, name the tag and the digest:
+
+```bash
+OBSCURA_VERSION=v0.2.1 OBSCURA_SHA256=<digest> ./install.sh
+```
+
+A mismatch aborts before anything is unpacked.
+If you would rather not have a script fetch a third-party binary at all, install
+[obscura](https://github.com/h4ckf0r0day/obscura) yourself first - `install.sh` skips the download
+whenever `obscura` is already on PATH.
+
 After installation, verify the command is globally available:
 
 ```bash
@@ -252,6 +267,8 @@ This project does not implement CAPTCHA solving, browser fingerprint spoofing, p
 | Variable | Effect |
 |----------|--------|
 | `OBSCURA_BIN` | Path to the obscura executable. Default: `obscura` on PATH. |
+| `OBSCURA_VERSION` | `install.sh` only. Release tag of obscura to download. Default: `latest`. |
+| `OBSCURA_SHA256` | `install.sh` only. Expected SHA256 of the obscura tarball. A mismatch aborts the install. |
 | `SEARCH_HEADLESS_CACHE_DIR` | Where cached results live. Default: `$XDG_CACHE_HOME/search-headless`. |
 | `SEARCH_HEADLESS_NO_CACHE` | `1` disables the cache entirely. |
 | `SEARCH_HEADLESS_RATE_FILE` | Path of the rate-limit timestamp. Default: `/tmp/search-headless-last-search`. |
