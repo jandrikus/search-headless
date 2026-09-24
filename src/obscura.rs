@@ -29,6 +29,8 @@ pub struct ObscuraFetchArgs {
     pub stealth: bool,
     pub wait_secs: Option<u64>,
     pub allow_private_network: bool,
+    /// Persistent browser state. Callers must serialize access to this directory.
+    pub storage_dir: Option<PathBuf>,
     /// Override the binary. `None` reads `OBSCURA_BIN`, then falls back to PATH.
     pub bin: Option<PathBuf>,
 }
@@ -42,6 +44,7 @@ impl ObscuraFetchArgs {
             stealth: false,
             wait_secs: None,
             allow_private_network: false,
+            storage_dir: None,
             bin: None,
         }
     }
@@ -89,12 +92,8 @@ pub fn build_obscura_args(args: &ObscuraFetchArgs) -> Vec<String> {
     let timeout_secs = args.deadline.remaining_ms().div_ceil(1000).max(1);
     let bin = args.bin.clone().unwrap_or_else(obscura_bin);
 
-    let mut cmd = vec![
-        bin.to_string_lossy().into_owned(),
-        "fetch".to_string(),
-        args.url.clone(),
-        "--quiet".to_string(),
-    ];
+    let mut cmd =
+        vec![bin.to_string_lossy().into_owned(), "fetch".to_string(), args.url.clone(), "--quiet".to_string()];
     if args.stealth {
         cmd.push("--stealth".to_string());
     }
@@ -104,6 +103,10 @@ pub fn build_obscura_args(args: &ObscuraFetchArgs) -> Vec<String> {
     cmd.push(timeout_secs.to_string());
     if args.allow_private_network {
         cmd.push("--allow-private-network".to_string());
+    }
+    if let Some(dir) = &args.storage_dir {
+        cmd.push("--storage-dir".to_string());
+        cmd.push(dir.to_string_lossy().into_owned());
     }
     if let Some(script) = &args.eval_script {
         cmd.push("--eval".to_string());
@@ -225,9 +228,7 @@ mod tests {
 
     #[test]
     fn builds_the_expected_argv() {
-        let args = ObscuraFetchArgs::new("https://example.com", Deadline::new(30_000))
-            .stealth(true)
-            .eval("1+1");
+        let args = ObscuraFetchArgs::new("https://example.com", Deadline::new(30_000)).stealth(true).eval("1+1");
         let argv = build_obscura_args(&args);
 
         assert_eq!(argv[1], "fetch");

@@ -5,9 +5,7 @@ use search_headless::cli::{emit, exit_code_for};
 use search_headless::config;
 use search_headless::fetch::{FetchContentOptions, fetch_content, fetch_content_batch};
 use search_headless::output::json::render_json;
-use search_headless::output::markdown::{
-    render_fetch_batch_markdown, render_fetched_markdown, render_search_markdown,
-};
+use search_headless::output::markdown::{render_fetch_batch_markdown, render_fetched_markdown, render_search_markdown};
 use search_headless::search::brave::{SearchBraveOptions, search_brave};
 use search_headless::types::Deadline;
 
@@ -38,9 +36,13 @@ struct SearchArgs {
     /// The search query.
     query: String,
 
-    /// Number of results to return.
+    /// Maximum results to return. Reads only the first page unless --paginate is set.
     #[arg(long, default_value_t = config::SEARCH_LIMIT, value_parser = positive_usize)]
     limit: usize,
+
+    /// Follow additional result pages until the limit is reached.
+    #[arg(long)]
+    paginate: bool,
 
     /// Also fetch the content of the top results.
     #[arg(long)]
@@ -93,11 +95,7 @@ struct CommonArgs {
 
 impl CommonArgs {
     fn cache_options(&self) -> CacheOptions {
-        CacheOptions {
-            enabled: Some(self.cache),
-            ttl_ms: self.cache_ttl.map(|seconds| seconds * 1000),
-            dir: None,
-        }
+        CacheOptions { enabled: Some(self.cache), ttl_ms: self.cache_ttl.map(|seconds| seconds * 1000), dir: None }
     }
 }
 
@@ -132,6 +130,7 @@ async fn main() {
 async fn run_search(args: SearchArgs) -> i32 {
     let options = SearchBraveOptions {
         limit: args.limit,
+        paginate: args.paginate,
         fetch: args.fetch,
         fetch_limit: args.fetch_limit,
         allow_private_urls: allow_private_urls(),

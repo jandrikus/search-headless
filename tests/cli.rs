@@ -42,6 +42,7 @@ impl Sandbox {
             .args(args)
             .env("SEARCH_HEADLESS_CACHE_DIR", self.dir.path().join("cache"))
             .env("SEARCH_HEADLESS_RATE_FILE", self.dir.path().join("last-search"))
+            .env("SEARCH_HEADLESS_STATE_DIR", self.dir.path().join("state"))
             .env("SEARCH_HEADLESS_NO_RATE_LIMIT", "1")
             // No fake obscura unless a test installs one, so an unexpected
             // escalation to the browser fails loudly instead of hanging.
@@ -120,11 +121,11 @@ fn search_fixture_mode_returns_parsed_json() {
 }
 
 #[test]
-fn search_fixture_mode_paginates_when_more_results_are_requested() {
+fn search_fixture_mode_paginates_only_when_explicitly_requested() {
     let sandbox = Sandbox::new();
     let run = sandbox.run_with(
         "search",
-        &["example", "--limit", "5"],
+        &["example", "--limit", "5", "--paginate"],
         &[
             ("SEARCH_HEADLESS_BRAVE_FIXTURE", &fixture("brave-results.html")),
             ("SEARCH_HEADLESS_BRAVE_FIXTURE_2", &fixture("brave-results-page2.html")),
@@ -141,11 +142,8 @@ fn search_fixture_mode_paginates_when_more_results_are_requested() {
 #[test]
 fn search_reports_a_challenge_as_blocked_never_as_an_empty_success() {
     let sandbox = Sandbox::new();
-    let run = sandbox.run_with(
-        "search",
-        &["example"],
-        &[("SEARCH_HEADLESS_BRAVE_FIXTURE", &fixture("brave-blocked.html"))],
-    );
+    let run =
+        sandbox.run_with("search", &["example"], &[("SEARCH_HEADLESS_BRAVE_FIXTURE", &fixture("brave-blocked.html"))]);
 
     assert_ne!(run.exit_code, 0);
     let json = run.json();
@@ -159,7 +157,7 @@ fn search_keeps_a_later_page_challenge_terminal_exiting_non_zero_with_earlier_re
     let sandbox = Sandbox::new();
     let run = sandbox.run_with(
         "search",
-        &["example", "--limit", "5"],
+        &["example", "--limit", "5", "--paginate"],
         &[
             ("SEARCH_HEADLESS_BRAVE_FIXTURE", &fixture("brave-results.html")),
             ("SEARCH_HEADLESS_BRAVE_FIXTURE_2", &fixture("brave-blocked.html")),

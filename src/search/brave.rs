@@ -12,7 +12,8 @@ use crate::obscura::{ObscuraFetchArgs, obscura_fetch, parse_obscura_json};
 use crate::rate_limit::{RateLimitOptions, RateLimitOutcome, reserve_search_slot};
 use crate::types::{CommandStatus, Deadline, SearchEngine, SearchResponse, SearchResult, ToolError};
 
-use super::parse_brave::{build_brave_search_url, detect_brave_block, parse_brave_next_url, parse_brave_results};
+use super::parse_brave::{build_brave_search_url, diagnose_brave_page, parse_brave_next_url, parse_brave_results};
+use super::session::{CHALLENGE_COOLDOWN_MS, SearchSession};
 
 const CACHE_NAMESPACE: &str = "search";
 
@@ -22,6 +23,9 @@ const RETRY_BACKOFF_MS: u64 = 1500;
 
 pub struct SearchBraveOptions {
     pub limit: usize,
+    pub paginate: bool,
+    /// Override the shared profile and cooldown directory, primarily for tests.
+    pub state_dir: Option<PathBuf>,
     pub fetch: bool,
     pub fetch_limit: usize,
     pub deadline: Deadline,
@@ -37,6 +41,8 @@ impl SearchBraveOptions {
     pub fn new(deadline: Deadline) -> Self {
         Self {
             limit: config::SEARCH_LIMIT,
+            paginate: false,
+            state_dir: None,
             fetch: false,
             fetch_limit: config::FETCH_LIMIT,
             deadline,
@@ -83,7 +89,12 @@ pub struct SerpPage {
 /// A crashed or missing browser is not a bot challenge, and reporting it as one
 /// sends an agent off to solve the wrong problem - so the two stay distinct all
 /// the way out to the caller. A challenge is never retried: it is reported.
-async fn load_serp(url: &str, deadline: &Deadline, bin: Option<&PathBuf>) -> Result<SerpPage, ToolError> {
+async fn load_serp(
+    url: &str,
+    deadline: &Deadline,
+    bin: Option<&PathBuf>,
+    session: Option<&SearchSession>,
+) -> Result<SerpPage, ToolError> {
     let mut last = ToolError::new("OBSCURA_SEARCH_FAILED", "obscura produced no output.", true);
 
     for attempt in 1..=LOAD_ATTEMPTS {
@@ -97,13 +108,18 @@ async fn load_serp(url: &str, deadline: &Deadline, bin: Option<&PathBuf>) -> Res
 
         let mut args = ObscuraFetchArgs::new(url, *deadline).eval(READ_SERP_SCRIPT).stealth(true);
         args.bin = bin.cloned();
+        args.storage_dir = session.map(|session| session.storage_dir.clone());
         let result = obscura_fetch(&args).await;
 
         if result.ok {
             match parse_obscura_json::<SerpPage>(&result.stdout) {
                 Some(page) => return Ok(page),
                 None => {
-                    last = ToolError::new("OBSCURA_SEARCH_FAILED", "obscura returned no readable results page.", true);
+                    last = ToolError::new(
+                        "OBSCURA_EVAL_FAILED",
+                        "Obscura did not return valid results-page JSON from the extraction script.",
+                        true,
+                    );
                 }
             }
         } else if deadline.expired() {
@@ -112,6 +128,12 @@ async fn load_serp(url: &str, deadline: &Deadline, bin: Option<&PathBuf>) -> Res
                 "Overall timeout expired while loading the results page.",
                 true,
             ));
+        } else if result.exit_code == 0 {
+            last = ToolError::new(
+                "OBSCURA_EVAL_FAILED",
+                "Obscura returned no output from the results-page extraction script.",
+                true,
+            );
         } else {
             let message = if result.stderr.trim().is_empty() {
                 format!("obscura exited with code {}.", result.exit_code)
@@ -129,44 +151,30 @@ async fn load_serp(url: &str, deadline: &Deadline, bin: Option<&PathBuf>) -> Res
     Err(last)
 }
 
-fn response(
-    query: &str,
-    status: CommandStatus,
-    results: Vec<SearchResult>,
-    errors: Vec<ToolError>,
-) -> SearchResponse {
-    SearchResponse {
-        query: query.to_string(),
-        engine: SearchEngine::Brave,
-        status,
-        results,
-        cached: None,
-        errors,
-    }
+fn response(query: &str, status: CommandStatus, results: Vec<SearchResult>, errors: Vec<ToolError>) -> SearchResponse {
+    SearchResponse { query: query.to_string(), engine: SearchEngine::Brave, status, results, cached: None, errors }
 }
 
-fn blocked_response(query: &str, message: &str, results: Vec<SearchResult>) -> SearchResponse {
-    response(query, CommandStatus::Blocked, results, vec![ToolError::new("BRAVE_CHALLENGE", message, true)])
+fn failed_response(query: &str, error: ToolError, results: Vec<SearchResult>) -> SearchResponse {
+    let status = match error.code.as_str() {
+        "BRAVE_CHALLENGE" | "BRAVE_COOLDOWN" => CommandStatus::Blocked,
+        "FETCH_TIMEOUT" => CommandStatus::Timeout,
+        _ if !results.is_empty() => CommandStatus::Partial,
+        _ => CommandStatus::Error,
+    };
+    response(query, status, results, vec![error])
 }
 
 /// Read SERP pages from a fixture instead of the network, for tests.
 fn load_fixture_serp(fixture_path: &PathBuf) -> Vec<SerpPage> {
     let mut pages = Vec::new();
     if let Ok(html) = std::fs::read_to_string(fixture_path) {
-        pages.push(SerpPage {
-            text: html.clone(),
-            html,
-            url: "https://search.brave.com/search".to_string(),
-        });
+        pages.push(SerpPage { text: html.clone(), html, url: "https://search.brave.com/search".to_string() });
     }
     if let Ok(second) = std::env::var("SEARCH_HEADLESS_BRAVE_FIXTURE_2")
         && let Ok(html) = std::fs::read_to_string(&second)
     {
-        pages.push(SerpPage {
-            text: html.clone(),
-            html,
-            url: "https://search.brave.com/search?offset=1".to_string(),
-        });
+        pages.push(SerpPage { text: html.clone(), html, url: "https://search.brave.com/search?offset=1".to_string() });
     }
     pages
 }
@@ -181,11 +189,11 @@ pub fn fixture_path(options: &SearchBraveOptions) -> Option<PathBuf> {
 
 /// Search Brave.
 ///
-/// Obscura is the only engine. If Brave serves a challenge instead of results,
+/// Obscura is the only browser. If Brave serves a challenge instead of results,
 /// that is reported as `status: "blocked"` - never as an empty success, and
 /// never worked around.
 pub async fn search_brave(query: &str, options: &SearchBraveOptions) -> SearchResponse {
-    let key = format!("{}:{}", options.limit, query);
+    let key = format!("v2:{}:{}:{}", options.paginate, options.limit, query);
     let fixture = fixture_path(options);
     let fixture_pages = fixture.as_ref().map(load_fixture_serp);
     let mut errors: Vec<ToolError> = Vec::new();
@@ -207,7 +215,7 @@ pub async fn search_brave(query: &str, options: &SearchBraveOptions) -> SearchRe
     let mut result = base;
     if cached.is_some() {
         result.cached = Some(true);
-    } else {
+    } else if fixture.is_none() && result.status == CommandStatus::Ok {
         cache_write(CACHE_NAMESPACE, &key, &result, &options.cache);
     }
 
@@ -243,25 +251,64 @@ pub async fn search_brave(query: &str, options: &SearchBraveOptions) -> SearchRe
     result
 }
 
-/// Load and parse SERP pages until the limit is met or Brave stops cooperating.
+/// Serialize browser access so cookies cannot be overwritten by another
+/// search and queued callers observe a challenge before making a request.
 async fn collect(
     query: &str,
     options: &SearchBraveOptions,
     fixture_pages: Option<&[SerpPage]>,
     errors: &mut Vec<ToolError>,
 ) -> SearchResponse {
+    let session = if fixture_pages.is_none() {
+        let dir = options.state_dir.clone().unwrap_or_else(config::search_state_dir);
+        match SearchSession::acquire(&dir, &options.deadline).await {
+            Ok(session) => Some(session),
+            Err(error) => return failed_response(query, error, vec![]),
+        }
+    } else {
+        None
+    };
+    let mut result = collect_pages(query, options, fixture_pages, errors, session.as_ref()).await;
+    if result.errors.iter().any(|error| error.code == "BRAVE_CHALLENGE")
+        && let Some(session) = session.as_ref()
+    {
+        match session.record_challenge() {
+            Ok(until) => {
+                let error = result.errors.iter_mut().find(|error| error.code == "BRAVE_CHALLENGE").unwrap();
+                error.message.push_str(" Further searches are paused for 15 minutes.");
+                let details = error.details.get_or_insert_with(|| serde_json::json!({}));
+                details["retryAfterSeconds"] = (CHALLENGE_COOLDOWN_MS / 1000).into();
+                details["nextAllowedAtMs"] = until.into();
+            }
+            Err(error) => result.errors.push(error),
+        }
+    }
+    result
+}
+
+/// Read one page by default. Pagination requires the caller's explicit opt-in.
+async fn collect_pages(
+    query: &str,
+    options: &SearchBraveOptions,
+    fixture_pages: Option<&[SerpPage]>,
+    errors: &mut Vec<ToolError>,
+    session: Option<&SearchSession>,
+) -> SearchResponse {
     let first = match fixture_pages {
         Some(pages) => match pages.first() {
             Some(page) => page.clone(),
-            None => return blocked_response(query, "Brave Search did not return a readable results page.", vec![]),
+            None => {
+                return failed_response(
+                    query,
+                    ToolError::new("BRAVE_FIXTURE_ERROR", "Cannot read the Brave page fixture.", false),
+                    vec![],
+                );
+            }
         },
         None => {
-            let slot = reserve_search_slot(RateLimitOptions {
-                deadline: options.deadline,
-                interval_sec: None,
-                file: None,
-            })
-            .await;
+            let slot =
+                reserve_search_slot(RateLimitOptions { deadline: options.deadline, interval_sec: None, file: None })
+                    .await;
             if let RateLimitOutcome::Declined { required_ms } = slot {
                 return response(
                     query,
@@ -278,19 +325,22 @@ async fn collect(
                 );
             }
 
-            match load_serp(&build_brave_search_url(query, None), &options.deadline, options.obscura_bin.as_ref()).await
+            match load_serp(
+                &build_brave_search_url(query, None),
+                &options.deadline,
+                options.obscura_bin.as_ref(),
+                session,
+            )
+            .await
             {
                 Ok(page) => page,
-                Err(error) => {
-                    let status = if error.code == "FETCH_TIMEOUT" { CommandStatus::Timeout } else { CommandStatus::Error };
-                    return response(query, status, vec![], vec![error]);
-                }
+                Err(error) => return failed_response(query, error, vec![]),
             }
         }
     };
 
-    if detect_brave_block(&first.html, &first.text) {
-        return blocked_response(query, "Brave Search served a bot challenge instead of results.", vec![]);
+    if let Some(error) = diagnose_brave_page(&first.html, &first.url) {
+        return failed_response(query, error, vec![]);
     }
 
     let mut all_results: Vec<SearchResult> = Vec::new();
@@ -301,7 +351,7 @@ async fn collect(
     let mut next_url = parse_brave_next_url(&first.html);
     let mut fixture_index = 1;
 
-    while all_results.len() < options.limit && options.deadline.remaining_ms() > 2000 {
+    while options.paginate && all_results.len() < options.limit && options.deadline.remaining_ms() > 2000 {
         let serp = match fixture_pages {
             Some(pages) => {
                 let page = pages.get(fixture_index).cloned();
@@ -319,7 +369,7 @@ async fn collect(
                     if !slot.is_ok() {
                         break;
                     }
-                    match load_serp(url, &options.deadline, options.obscura_bin.as_ref()).await {
+                    match load_serp(url, &options.deadline, options.obscura_bin.as_ref(), session).await {
                         Ok(page) => Some(page),
                         Err(error) => {
                             errors.push(error);
@@ -332,11 +382,8 @@ async fn collect(
         };
         let Some(serp) = serp else { break };
 
-        if detect_brave_block(&serp.html, &serp.text) {
-            // A challenge outranks a partial page: a later --fetch problem must
-            // not downgrade "blocked" to "partial" and turn a non-zero exit into
-            // success.
-            return blocked_response(query, "Brave Search served a bot challenge while paginating.", all_results);
+        if let Some(error) = diagnose_brave_page(&serp.html, &serp.url) {
+            return failed_response(query, error, all_results);
         }
 
         let before = all_results.len();
@@ -425,7 +472,8 @@ mod tests {
 
     #[test]
     fn strips_every_tracking_parameter_it_knows() {
-        let noisy = "https://example.com/a?utm_source=x&ref=y&ref_src=z&fbclid=1&gclid=2&mc_cid=3&igshid=4&spm=5&keep=me";
+        let noisy =
+            "https://example.com/a?utm_source=x&ref=y&ref_src=z&fbclid=1&gclid=2&mc_cid=3&igshid=4&spm=5&keep=me";
         assert_eq!(canonical_url(noisy), "https://example.com/a?keep=me");
     }
 }

@@ -33,6 +33,20 @@ pub fn cache_dir() -> PathBuf {
     }
 }
 
+/// Persistent Brave state, separate from disposable result caches.
+pub fn search_state_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("SEARCH_HEADLESS_STATE_DIR")
+        && !dir.is_empty()
+    {
+        return PathBuf::from(dir);
+    }
+    let base = match std::env::var("XDG_STATE_HOME") {
+        Ok(dir) if dir.starts_with('/') => PathBuf::from(dir),
+        _ => home_dir().join(".local/state"),
+    };
+    base.join("search-headless/brave")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,6 +12,11 @@ pub fn render_search_markdown(response: &SearchResponse) -> String {
         lines.push(String::new());
     }
 
+    if response.status == crate::types::CommandStatus::Ok && response.results.is_empty() {
+        lines.push("Brave reported no matching results.".to_string());
+        lines.push(String::new());
+    }
+
     for result in &response.results {
         lines.push(format!("{}. [{}]({})", result.rank, result.title, result.url));
         if let Some(display_url) = &result.display_url {
@@ -32,12 +37,7 @@ pub fn render_search_markdown(response: &SearchResponse) -> String {
 
 pub fn render_fetched_markdown(content: &FetchedContent) -> String {
     let heading = content.title.as_deref().unwrap_or(&content.url);
-    let mut lines = vec![
-        format!("# {heading}"),
-        String::new(),
-        format!("URL: {}", content.url),
-        String::new(),
-    ];
+    let mut lines = vec![format!("# {heading}"), String::new(), format!("URL: {}", content.url), String::new()];
     lines.extend(provenance(content));
     if let Some(excerpt) = &content.excerpt {
         lines.push(format!("> {excerpt}"));
@@ -118,11 +118,7 @@ fn provenance(content: &FetchedContent) -> Vec<String> {
     if content.truncated == Some(true) {
         bits.push(format!("truncated from {} chars", content.text_length()));
     }
-    if bits.is_empty() {
-        Vec::new()
-    } else {
-        vec![format!("_{}_", bits.join(" · ")), String::new()]
-    }
+    if bits.is_empty() { Vec::new() } else { vec![format!("_{}_", bits.join(" · ")), String::new()] }
 }
 
 fn error_section(errors: &[ToolError]) -> Vec<String> {
@@ -132,6 +128,14 @@ fn error_section(errors: &[ToolError]) -> Vec<String> {
     let mut lines = vec!["## Errors".to_string(), String::new()];
     for error in errors {
         lines.push(format!("- **{}**: {}", error.code, error.message));
+        if let Some(details) = &error.details {
+            if let Some(url) = details["pageUrl"].as_str() {
+                lines.push(format!("  Page: {url}"));
+            }
+            if let Some(count) = details["webSnippetCount"].as_u64() {
+                lines.push(format!("  Result containers: {count}; result links: {}", details["resultLinkCount"]));
+            }
+        }
     }
     lines
 }
@@ -196,8 +200,23 @@ mod tests {
     }
 
     #[test]
+    fn reports_confirmed_empty_searches_and_page_diagnostics() {
+        let mut response = response();
+        response.results.clear();
+        assert!(render_search_markdown(&response).contains("Brave reported no matching results."));
+        response.status = CommandStatus::Error;
+        response.errors.push(ToolError::new("BRAVE_PARSE_ERROR", "Changed markup", false).with_details(
+            serde_json::json!({"pageUrl":"https://search.brave.com/search", "webSnippetCount":3, "resultLinkCount":0}),
+        ));
+        let rendered = render_search_markdown(&response);
+        assert!(!rendered.contains("no matching results"));
+        assert!(rendered.contains("Result containers: 3; result links: 0"));
+    }
+
+    #[test]
     fn renders_fetched_markdown() {
-        let mut content = FetchedContent::failure("https://example.com", CommandStatus::Ok, ToolError::new("X", "y", true));
+        let mut content =
+            FetchedContent::failure("https://example.com", CommandStatus::Ok, ToolError::new("X", "y", true));
         content.errors.clear();
         content.title = Some("T".to_string());
         content.text = Some("Body".to_string());

@@ -22,9 +22,11 @@ fn serp_payload(name: &str) -> String {
 /// second page; a query containing `challenge` gets the blocked fixture.
 fn fake_obscura() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
-    for (file, source) in
-        [("page1.json", "brave-results.html"), ("page2.json", "brave-results-page2.html"), ("blocked.json", "brave-blocked.html")]
-    {
+    for (file, source) in [
+        ("page1.json", "brave-results.html"),
+        ("page2.json", "brave-results-page2.html"),
+        ("blocked.json", "brave-blocked.html"),
+    ] {
         std::fs::write(dir.path().join(file), serp_payload(source)).expect("write payload");
     }
 
@@ -49,6 +51,7 @@ fn options(limit: usize, bin: Option<PathBuf>) -> SearchBraveOptions {
         limit,
         // The cache would answer the second test from the first one's results.
         cache: CacheOptions { enabled: Some(false), ..Default::default() },
+        state_dir: bin.as_ref().and_then(|path| path.parent()).map(|parent| parent.join("state")),
         obscura_bin: bin,
         ..SearchBraveOptions::new(Deadline::new(20_000))
     }
@@ -76,7 +79,9 @@ async fn paginates_through_the_spawn_path_and_ranks_across_pages() {
     without_rate_limiting();
     let (_guard, bin) = fake_obscura();
 
-    let response = search_brave("example", &options(5, Some(bin))).await;
+    let mut options = options(5, Some(bin));
+    options.paginate = true;
+    let response = search_brave("example", &options).await;
 
     assert_eq!(response.results.len(), 5);
     assert_eq!(response.results[4].title, "Fifth Result - Other Site");
@@ -101,7 +106,8 @@ async fn reports_a_challenge_from_the_spawn_path_as_blocked() {
 async fn reports_a_broken_obscura_as_an_error_not_as_blocked() {
     without_rate_limiting();
 
-    let response = search_brave("anything", &options(3, Some(PathBuf::from("/nonexistent/obscura")))).await;
+    let dir = tempfile::tempdir().unwrap();
+    let response = search_brave("anything", &options(3, Some(dir.path().join("missing-obscura")))).await;
 
     assert_eq!(response.status, CommandStatus::Error);
     assert_eq!(response.errors[0].code, "OBSCURA_SEARCH_FAILED");

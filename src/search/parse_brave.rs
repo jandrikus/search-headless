@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use dom_query::Document;
 use url::Url;
 
-use crate::types::SearchResult;
+use crate::types::{SearchResult, ToolError};
 
 /// Parse Brave Search SERP HTML into structured results.
 ///
@@ -35,10 +35,7 @@ pub fn parse_brave_results(html: &str, limit: usize, start_rank: usize) -> Vec<S
 
         // Prefer the `title` attribute; it is cleaner than the rendered text.
         let title_el = snippet.select(".title").first();
-        let title = title_el
-            .attr("title")
-            .map(|t| t.to_string())
-            .unwrap_or_else(|| title_el.text().trim().to_string());
+        let title = title_el.attr("title").map(|t| t.to_string()).unwrap_or_else(|| title_el.text().trim().to_string());
         if title.is_empty() {
             continue;
         }
@@ -64,37 +61,86 @@ pub fn parse_brave_next_url(html: &str) -> Option<String> {
     for anchor in document.select("a").iter() {
         if anchor.text().trim() == "Next" {
             let href = anchor.attr("href")?;
-            return Url::parse("https://search.brave.com").ok()?.join(&href).ok().map(|u| u.to_string());
+            let url = Url::parse("https://search.brave.com").ok()?.join(&href).ok()?;
+            if url.scheme() == "https"
+                && url.host_str() == Some("search.brave.com")
+                && url.path() == "/search"
+                && url.port_or_known_default() == Some(443)
+                && url.username().is_empty()
+                && url.password().is_none()
+            {
+                return Some(url.to_string());
+            }
         }
     }
     None
 }
 
-/// Phrases Brave uses on its interstitials.
-///
-/// The CAPTCHA wording is only one of several: a flagged request or a
-/// JavaScript-required notice is just as much a block, and matching only the
-/// CAPTCHA text reports those pages as an empty success.
-const BLOCK_PHRASES: [&str; 7] = [
-    "verifying you",
-    "verify you are human",
-    "not a robot",
-    "request has been flagged",
-    "unusual traffic",
-    "needs javascript",
-    "enable javascript",
-];
+const BLOCK_PHRASES: [&str; 5] =
+    ["verifying you", "verify you are human", "not a robot", "request has been flagged", "unusual traffic"];
 
-/// Detect whether the page is an interstitial rather than results.
-///
-/// Only treated as a block when no results were parsed: a page can mention one
-/// of these phrases in a snippet without being a challenge.
-pub fn detect_brave_block(html: &str, text: &str) -> bool {
-    let haystack = text.to_lowercase();
-    if !BLOCK_PHRASES.iter().any(|phrase| haystack.contains(phrase)) {
-        return false;
+/// Classify empty pages instead of treating a parser or rendering failure as
+/// zero matches. Diagnostics contain counts and a URL without query parameters,
+/// never cookies, storage contents, script bodies, or a dump of the page.
+pub fn diagnose_brave_page(html: &str, final_url: &str) -> Option<ToolError> {
+    if !parse_brave_results(html, 1, 1).is_empty() {
+        return None;
     }
-    parse_brave_results(html, 1, 1).is_empty()
+    let document = Document::from(html);
+    let snippets = document.select(r#".snippet[data-type="web"]:not(.standalone)"#).length();
+    let links = document.select(".result-content a[href]").length();
+    document.select("script,style,template,svg").remove();
+    // A result whose markup changed must not turn a quoted challenge message
+    // into an actual challenge. Keep interstitial text outside result cards.
+    document.select(".snippet, .result-content").remove();
+    let javascript_notice = document.select("noscript").text().to_lowercase();
+    document.select("noscript").remove();
+    let text = document.select("body").text().to_lowercase();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let challenge = BLOCK_PHRASES.iter().any(|phrase| text.contains(phrase));
+    let javascript = ["needs javascript", "enable javascript", "javascript is required"]
+        .iter()
+        .any(|phrase| text.contains(phrase) || javascript_notice.contains(phrase));
+    let no_results = document.select("h1,h2,h3,[role=heading]").iter().any(|heading| {
+        let text = heading.text().to_lowercase();
+        let text = text.trim().trim_end_matches(['.', '!']);
+        matches!(text, "no results" | "no results found" | "no matching results" | "no matches found")
+    });
+
+    let (code, message) = if challenge {
+        ("BRAVE_CHALLENGE", "Brave Search served a bot challenge instead of results.")
+    } else if snippets > 0 || links > 0 {
+        (
+            "BRAVE_PARSE_ERROR",
+            "Brave returned result markup, but no results could be parsed. Its selectors may have changed.",
+        )
+    } else if no_results {
+        return None;
+    } else if javascript {
+        (
+            "BRAVE_JAVASCRIPT_REQUIRED",
+            "Brave returned a JavaScript-required notice. Obscura did not render the results page.",
+        )
+    } else {
+        (
+            "BRAVE_UNRECOGNIZED_PAGE",
+            "Brave returned an unrecognized page, not a confirmed empty result set. Rendering may be incomplete or the page markup may have changed.",
+        )
+    };
+
+    let page_url = Url::parse(final_url).ok().map(|mut url| {
+        url.set_query(None);
+        url.set_fragment(None);
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        url.to_string()
+    });
+    Some(ToolError::new(code, message, code == "BRAVE_CHALLENGE").with_details(serde_json::json!({
+        "pageUrl": page_url,
+        "title": document.select("title").text().chars().take(160).collect::<String>(),
+        "webSnippetCount": snippets,
+        "resultLinkCount": links,
+    })))
 }
 
 /// Build a Brave Search URL with the given query and options.
@@ -169,28 +215,71 @@ mod tests {
 
     #[test]
     fn detects_a_brave_captcha_block() {
-        assert!(detect_brave_block(BLOCKED, "Verifying you're not a bot Quick check before you continue searching."));
+        assert_eq!(diagnose_brave_page(BLOCKED, "").unwrap().code, "BRAVE_CHALLENGE");
     }
 
     #[test]
     fn does_not_treat_normal_results_as_blocked() {
-        assert!(!detect_brave_block("<html><body>Normal results</body></html>", "Normal results"));
+        assert_eq!(
+            diagnose_brave_page("<html><body>Normal results</body></html>", "").unwrap().code,
+            "BRAVE_UNRECOGNIZED_PAGE"
+        );
     }
 
     #[test]
     fn detects_interstitials_that_are_not_the_captcha_wording() {
-        for text in [
-            "Your request has been flagged.",
-            "This page needs JavaScript to run.",
-            "unusual traffic from your network",
-        ] {
-            assert!(detect_brave_block("<html><body></body></html>", text), "{text}");
+        for text in ["Your request has been flagged.", "unusual traffic from your network"] {
+            assert_eq!(
+                diagnose_brave_page(&format!("<html><body>{text}</body></html>"), "").unwrap().code,
+                "BRAVE_CHALLENGE"
+            );
         }
     }
 
     #[test]
     fn does_not_report_a_block_when_results_parsed_even_if_a_snippet_mentions_a_phrase() {
-        assert!(!detect_brave_block(RESULTS, "verifying you can use this library"));
+        let html = RESULTS.replace("useful information", "unusual traffic");
+        assert!(diagnose_brave_page(&html, "").is_none());
+    }
+
+    #[test]
+    fn ignores_challenge_strings_in_scripts_and_unparseable_result_cards() {
+        let html = r#"<html><body><script>const label = 'verify you are human';</script>
+            <div class="snippet" data-type="web">unusual traffic</div></body></html>"#;
+        assert_eq!(diagnose_brave_page(html, "").unwrap().code, "BRAVE_PARSE_ERROR");
+    }
+
+    #[test]
+    fn explicit_no_matches_outranks_an_inert_noscript_notice() {
+        let html = "<html><body><noscript>Please enable JavaScript</noscript><h1>No results found</h1></body></html>";
+        assert!(diagnose_brave_page(html, "").is_none());
+    }
+
+    #[test]
+    fn javascript_notices_are_not_bot_challenges() {
+        let html = "<html><body><noscript>This page needs JavaScript</noscript></body></html>";
+        assert_eq!(diagnose_brave_page(html, "").unwrap().code, "BRAVE_JAVASCRIPT_REQUIRED");
+    }
+
+    #[test]
+    fn diagnostics_do_not_include_query_parameters_or_page_contents() {
+        let html = "<html><head><title>Loading</title></head><body>private page body</body></html>";
+        let error = diagnose_brave_page(html, "https://search.brave.com/search?q=private-query#fragment").unwrap();
+        let details = error.details.unwrap();
+        assert_eq!(details["pageUrl"], "https://search.brave.com/search");
+        assert!(!details.to_string().contains("private"));
+    }
+
+    #[test]
+    fn pagination_cannot_navigate_away_from_brave_search() {
+        for href in [
+            "https://example.com/search?offset=1",
+            "http://search.brave.com/search?offset=1",
+            "/other",
+            "https://search.brave.com:8443/search",
+        ] {
+            assert!(parse_brave_next_url(&format!(r#"<a href="{href}">Next</a>"#)).is_none());
+        }
     }
 
     #[test]
