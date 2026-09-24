@@ -13,7 +13,11 @@ pub fn render_search_markdown(response: &SearchResponse) -> String {
     }
 
     if response.status == crate::types::CommandStatus::Ok && response.results.is_empty() {
-        lines.push("Brave reported no matching results.".to_string());
+        let engine = match response.engine {
+            crate::types::SearchEngine::Brave => "Brave",
+            crate::types::SearchEngine::Searxng => "SearXNG",
+        };
+        lines.push(format!("{engine} reported no matching results."));
         lines.push(String::new());
     }
 

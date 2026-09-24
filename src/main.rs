@@ -7,6 +7,7 @@ use search_headless::fetch::{FetchContentOptions, fetch_content, fetch_content_b
 use search_headless::output::json::render_json;
 use search_headless::output::markdown::{render_fetch_batch_markdown, render_fetched_markdown, render_search_markdown};
 use search_headless::search::brave::{SearchBraveOptions, search_brave};
+use search_headless::search::searxng::{SearchSearxngOptions, search_searxng};
 use search_headless::types::Deadline;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -25,16 +26,30 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Search the web through Brave.
+    /// Search through Brave or a configured SearXNG instance.
     Search(SearchArgs),
     /// Extract readable content from one or more URLs.
     Fetch(FetchArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SearchBackend {
+    Brave,
+    Searxng,
 }
 
 #[derive(Debug, Args)]
 struct SearchArgs {
     /// The search query.
     query: String,
+
+    /// Search backend. Pi configures this explicitly; the CLI keeps its Brave default.
+    #[arg(long, value_enum, default_value_t = SearchBackend::Brave)]
+    engine: SearchBackend,
+
+    /// SearXNG base URL. Defaults to SEARXNG_URL; credentials come only from SEARXNG_USER and SEARXNG_PASS.
+    #[arg(long)]
+    searxng_url: Option<String>,
 
     /// Maximum results to return. Reads only the first page unless --paginate is set.
     #[arg(long, default_value_t = config::SEARCH_LIMIT, value_parser = positive_usize)]
@@ -139,7 +154,26 @@ async fn run_search(args: SearchArgs) -> i32 {
         ..SearchBraveOptions::new(Deadline::new(args.common.timeout))
     };
 
-    let result = search_brave(&args.query, &options).await;
+    let result = match args.engine {
+        SearchBackend::Brave => search_brave(&args.query, &options).await,
+        SearchBackend::Searxng => {
+            search_searxng(
+                &args.query,
+                &SearchSearxngOptions {
+                    instance_url: args.searxng_url,
+                    limit: options.limit,
+                    paginate: options.paginate,
+                    fetch: options.fetch,
+                    fetch_limit: options.fetch_limit,
+                    deadline: options.deadline,
+                    cache: options.cache,
+                    concurrency: options.concurrency,
+                    allow_private_urls: options.allow_private_urls,
+                },
+            )
+            .await
+        }
+    };
     emit(&match args.common.format {
         Format::Markdown => render_search_markdown(&result),
         Format::Json => render_json(&result),

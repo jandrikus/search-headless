@@ -151,6 +151,7 @@ pub struct SearchResult {
 #[serde(rename_all = "lowercase")]
 pub enum SearchEngine {
     Brave,
+    Searxng,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
