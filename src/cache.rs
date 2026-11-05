@@ -8,6 +8,8 @@
 //! not a speedup.
 
 use std::fs;
+use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -98,15 +100,18 @@ pub fn cache_write<T: Serialize>(namespace: &str, key: &str, value: &T, options:
 
     let path = entry_path(namespace, key, options);
     let dir = namespace_dir(namespace, options);
-    if fs::create_dir_all(&dir).is_err() {
+    if fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).is_err()
+        || fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).is_err()
+    {
         return;
     }
 
     let envelope = Envelope { expires_at: now_ms() + ttl_ms, value };
     let Ok(encoded) = serde_json::to_vec(&envelope) else { return };
 
-    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    if fs::write(&tmp, &encoded).is_err() {
+    let tmp = path.with_extension(format!("json.{}.tmp", rand::random::<u64>()));
+    let Ok(mut file) = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp) else { return };
+    if file.write_all(&encoded).is_err() {
         let _ = fs::remove_file(&tmp);
         return;
     }
@@ -191,6 +196,16 @@ mod tests {
         cache_write("ns", "key", &serde_json::json!({"hello": "world"}), &options);
         let got: serde_json::Value = cache_read("ns", "key", &options).expect("hit");
         assert_eq!(got, serde_json::json!({"hello": "world"}));
+    }
+
+    #[test]
+    fn cache_entries_are_private_even_with_a_permissive_umask() {
+        let (_guard, options) = sandbox();
+        cache_write("ns", "key", &"sensitive", &options);
+        let dir = options.dir.as_ref().unwrap().join("ns");
+        let file = fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+        assert_eq!(fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     #[test]

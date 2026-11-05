@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use dom_query::Document;
@@ -10,7 +10,7 @@ use url::Url;
 use crate::config;
 use crate::types::{CommandStatus, Deadline, FetchMethod, FetchedContent, ToolError};
 
-use super::url_validation::{UrlValidationOptions, assert_public_dns, validate_public_http_url};
+use super::url_validation::{UrlValidationOptions, is_private_ip, validate_public_http_url};
 
 pub struct HttpExtractOptions {
     pub deadline: Deadline,
@@ -55,21 +55,21 @@ const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
 const HTML_TYPES: [&str; 2] = ["text/html", "application/xhtml+xml"];
 const MAX_REDIRECTS: usize = 8;
 
-fn client() -> &'static Client {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        let mut headers = HeaderMap::new();
-        headers.insert(reqwest::header::USER_AGENT, HeaderValue::from_static(USER_AGENT));
-        headers.insert(reqwest::header::ACCEPT, HeaderValue::from_static(ACCEPT));
-        headers.insert(reqwest::header::ACCEPT_LANGUAGE, HeaderValue::from_static(ACCEPT_LANGUAGE));
-        headers.insert(reqwest::header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+fn client(url: &Url, addresses: &[SocketAddr]) -> Result<Client, String> {
+    let mut headers = HeaderMap::new();
+    headers.insert(reqwest::header::USER_AGENT, HeaderValue::from_static(USER_AGENT));
+    headers.insert(reqwest::header::ACCEPT, HeaderValue::from_static(ACCEPT));
+    headers.insert(reqwest::header::ACCEPT_LANGUAGE, HeaderValue::from_static(ACCEPT_LANGUAGE));
+    headers.insert(reqwest::header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
 
-        Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .default_headers(headers)
-            .build()
-            .expect("HTTP client")
-    })
+    let mut builder = Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .default_headers(headers);
+    if let Some(url::Host::Domain(host)) = url.host() {
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    builder.build().map_err(|_| "FETCH_FAILED".to_string())
 }
 
 pub async fn extract_via_http(
@@ -83,10 +83,6 @@ pub async fn extract_via_http(
         Ok(url) => url,
         Err(error) => return FetchedContent::failure(input, CommandStatus::Error, error),
     };
-    if let Some(error) = assert_public_dns(&url, validation_options).await {
-        return FetchedContent::failure(input, CommandStatus::Error, error);
-    }
-
     let response = match fetch_with_redirects(url, options).await {
         Ok(response) => response,
         Err(code) => {
@@ -245,13 +241,44 @@ fn with_text(base: Extracted, text: &str, max_chars: usize) -> FetchedContent {
 async fn fetch_with_redirects(url: Url, options: &HttpExtractOptions) -> Result<Response, String> {
     let mut current = url;
 
-    for _ in 0..MAX_REDIRECTS {
+    for hop in 0..MAX_REDIRECTS {
         let remaining = options.deadline.remaining_ms();
         if remaining == 0 {
             return Err("FETCH_TIMEOUT".to_string());
         }
 
-        let request = client().get(current.clone()).send();
+        let host = match current.host() {
+            Some(url::Host::Domain(host)) => host.to_string(),
+            Some(url::Host::Ipv4(ip)) => ip.to_string(),
+            Some(url::Host::Ipv6(ip)) => ip.to_string(),
+            None => return Err("INVALID_URL".to_string()),
+        };
+        let port = current.port_or_known_default().ok_or("INVALID_URL")?;
+        let addresses: Vec<_> = match tokio::time::timeout(
+            Duration::from_millis(remaining),
+            tokio::net::lookup_host((host.as_str(), port)),
+        )
+        .await
+        {
+            Ok(Ok(addresses)) => addresses.collect(),
+            Ok(Err(_)) => return Err("FETCH_FAILED".to_string()),
+            Err(_) => return Err("FETCH_TIMEOUT".to_string()),
+        };
+        let allow_private = if hop == 0 { options.allow_private_urls } else {
+            options.allow_private_urls && options.allow_private_redirects
+        };
+        if addresses.is_empty() {
+            return Err("FETCH_FAILED".to_string());
+        }
+        if !allow_private && addresses.iter().any(|address| is_private_ip(address.ip())) {
+            return Err("PRIVATE_URL_BLOCKED".to_string());
+        }
+        let client = client(&current, &addresses)?;
+        let remaining = options.deadline.remaining_ms();
+        if remaining == 0 {
+            return Err("FETCH_TIMEOUT".to_string());
+        }
+        let request = client.get(current.clone()).send();
         let response = match tokio::time::timeout(Duration::from_millis(remaining), request).await {
             Ok(Ok(response)) => response,
             Ok(Err(e)) if e.is_timeout() => return Err("FETCH_TIMEOUT".to_string()),
@@ -274,11 +301,7 @@ async fn fetch_with_redirects(url: Url, options: &HttpExtractOptions) -> Result<
         let hop_options = UrlValidationOptions {
             allow_private_urls: options.allow_private_redirects && options.allow_private_urls,
         };
-        let validated = validate_public_http_url(next.as_str(), hop_options).map_err(|e| e.code)?;
-        if let Some(error) = assert_public_dns(&validated, hop_options).await {
-            return Err(error.code);
-        }
-        current = validated;
+        current = validate_public_http_url(next.as_str(), hop_options).map_err(|e| e.code)?;
     }
 
     Err("TOO_MANY_REDIRECTS".to_string())
@@ -322,7 +345,7 @@ async fn read_bounded(mut response: Response, max_bytes: usize, deadline: &Deadl
 
 fn message_for(code: &str) -> String {
     match code {
-        "PRIVATE_URL_BLOCKED" => "Redirect target is private/local.".to_string(),
+        "PRIVATE_URL_BLOCKED" => "URL resolves to a private or local address.".to_string(),
         "RESPONSE_TOO_LARGE" => "Response exceeded the size limit.".to_string(),
         "TOO_MANY_REDIRECTS" => "Too many redirects.".to_string(),
         "FETCH_TIMEOUT" => "The request did not finish before the deadline.".to_string(),
@@ -364,6 +387,17 @@ mod tests {
 
     async fn run(url: &str, options: &HttpExtractOptions) -> FetchedContent {
         extract_via_http(url, options, &mut HttpExtractDiagnostics::default()).await
+    }
+
+    #[tokio::test]
+    async fn connects_to_the_validated_address_without_resolving_the_name_again() {
+        let server = testing::serve(|_| testing::with_type("validated address", "text/plain")).await;
+        let local = Url::parse(&server.base_url).unwrap();
+        let address: SocketAddr = format!("127.0.0.1:{}", local.port().unwrap()).parse().unwrap();
+        // This name cannot resolve in DNS. The client must use the supplied address.
+        let url = Url::parse(&format!("http://rebind.invalid:{}/", local.port().unwrap())).unwrap();
+        let response = client(&url, &[address]).unwrap().get(url).send().await.unwrap();
+        assert_eq!(response.text().await.unwrap(), "validated address");
     }
 
     #[tokio::test]

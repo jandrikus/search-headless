@@ -7,10 +7,12 @@
 //! process queue behind the first rather than race it.
 
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::config;
 use crate::types::Deadline;
 
 /// Minimum seconds between searches to appear human-like.
@@ -19,11 +21,11 @@ pub const MIN_SEARCH_INTERVAL_SEC: u64 = 10;
 /// A lock older than this belonged to a process that died holding it.
 const STALE_LOCK_MS: u64 = MIN_SEARCH_INTERVAL_SEC * 3 * 1000;
 
-/// Timestamp of the last search. In /tmp so it costs no disk I/O.
+/// Timestamp of the last search, kept with the user's private Brave state.
 pub fn last_search_file() -> PathBuf {
     match std::env::var("SEARCH_HEADLESS_RATE_FILE") {
         Ok(path) if !path.is_empty() => PathBuf::from(path),
-        _ => PathBuf::from("/tmp/search-headless-last-search"),
+        _ => config::search_state_dir().join("last-search"),
     }
 }
 
@@ -120,8 +122,15 @@ async fn claim(file: &Path, interval_ms: u64, deadline: &Deadline, started_at: u
         tokio::time::sleep(Duration::from_millis(wait_ms)).await;
     }
 
-    // Spacing is best effort; a read-only /tmp must not fail the search.
-    let _ = fs::write(file, now_ms().to_string());
+    // Replace the path rather than following a symlink when writing the timestamp.
+    // Spacing remains best effort if the state directory cannot be written.
+    let temporary = file.with_extension(format!("{}.tmp", rand::random::<u64>()));
+    if let Ok(mut output) = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temporary) {
+        if write!(output, "{}", now_ms()).is_ok() {
+            let _ = fs::rename(&temporary, file);
+        }
+        let _ = fs::remove_file(temporary);
+    }
     RateLimitOutcome::Ok { waited_ms: now_ms().saturating_sub(started_at) }
 }
 
@@ -141,6 +150,18 @@ mod tests {
             interval_sec: Some(interval_sec),
             file: Some(file.to_path_buf()),
         }
+    }
+
+    #[tokio::test]
+    async fn does_not_follow_a_symlink_when_writing_the_timestamp() {
+        let (dir, file) = sandbox();
+        let target = dir.path().join("target");
+        fs::write(&target, "sentinel").unwrap();
+        std::os::unix::fs::symlink(&target, &file).unwrap();
+
+        assert!(reserve_search_slot(options(&file, 5000, 1)).await.is_ok());
+        assert_eq!(fs::read_to_string(target).unwrap(), "sentinel");
+        assert!(!fs::symlink_metadata(file).unwrap().file_type().is_symlink());
     }
 
     #[tokio::test]
