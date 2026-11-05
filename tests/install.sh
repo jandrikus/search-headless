@@ -45,6 +45,9 @@ export HOME="$work/home" PATH="$work/fake-bin:$PATH" MOCK_ARCHIVE="$work/cli.tar
 
 MOCK_BAD_HASH=1 bash "$root/install.sh" --binary > "$work/bad.log" 2>&1 && { echo 'Accepted a bad checksum' >&2; exit 1; }
 test ! -e "$HOME/.local/bin/search-headless"
+printf '#!/usr/bin/env bash\nprintf "old search-headless\\n"\n' > "$work/fake-bin/search-headless"
+chmod 755 "$work/fake-bin/search-headless"
 bash "$root/install.sh" --binary > "$work/good.log" 2>&1
+grep -q 'A different search-headless takes precedence on PATH' "$work/good.log"
 test "$("$HOME/.local/bin/search-headless")" = 'test search-headless'
 printf 'Prebuilt installer accepts a verified archive and rejects a bad checksum.\n'

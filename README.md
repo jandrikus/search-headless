@@ -109,7 +109,7 @@ search-headless fetch "url" --format markdown
 
 ### Prebuilt release
 
-After the first `v0.1.0` release is published, Apple Silicon macOS and x86-64 Linux users can install without Rust:
+Apple Silicon macOS and x86-64 Linux users can install release `v0.1.0` without Rust:
 
 ```bash
 curl -fLO https://github.com/jandrikus/search-headless/releases/download/v0.1.0/install.sh
@@ -155,6 +155,8 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 To make this persistent in macOS's default zsh shell, add that line to `~/.zshrc` and start a new shell.
+If another `search-headless` is already on PATH, the v0.1.0 installer may report that older executable during verification.
+Use `command -v search-headless` to check which one your shell will run.
 
 ### Shipping it elsewhere
 

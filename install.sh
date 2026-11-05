@@ -159,10 +159,13 @@ fi
 
 # ── Verify ──────────────────────────────────────────────────────────────────
 info "Verifying the installed command..."
-if command -v search-headless >/dev/null 2>&1; then
-  info "search-headless -> $(command -v search-headless)"
-else
+"${BIN_DIR}/search-headless" --version
+if ! command -v search-headless >/dev/null 2>&1; then
   warn "search-headless is not visible on PATH in this shell yet. Open a new shell or update PATH."
+elif [[ "$(command -v search-headless)" != "${BIN_DIR}/search-headless" ]]; then
+  warn "A different search-headless takes precedence on PATH: $(command -v search-headless)"
+else
+  info "search-headless -> ${BIN_DIR}/search-headless"
 fi
 
 # ── Done ────────────────────────────────────────────────────────────────────
